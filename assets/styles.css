@@ -112,6 +112,7 @@ input::placeholder { color: #94a29d; }
 .word-card-main { display: flex; gap: 10px; min-width: 0; align-items: center; }
 .word-card h3 { overflow: hidden; color: #19333a; font: 700 18px/1.15 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
 .source-host { overflow: hidden; margin: 4px 0 0; color: #728580; font-family: ui-monospace, Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.added-at { margin: 3px 0 0; color: #8a9691; font-family: ui-monospace, Consolas, monospace; font-size: 10px; letter-spacing: .01em; }
 .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .status-dot.unfamiliar { background: #c46a53; }.status-dot.known { background: #d5a33d; }.status-dot.familiar { background: #36836e; }
 .status-pill { justify-self: end; padding: 4px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }

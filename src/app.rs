@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
+use js_sys::Date;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -97,6 +98,7 @@ struct Text {
     add_success: &'static str,
     save_success: &'static str,
     load_error: &'static str,
+    added_at: &'static str,
 }
 
 fn text(language: Language) -> Text {
@@ -145,6 +147,7 @@ fn text(language: Language) -> Text {
             add_success: "已加入词汇档案。",
             save_success: "已保存修改。",
             load_error: "无法读取单词：",
+            added_at: "添加于",
         },
         Language::En => Text {
             app_title: "Vocabulary Archive",
@@ -190,6 +193,7 @@ fn text(language: Language) -> Text {
             add_success: "Added to the archive.",
             save_success: "Changes saved.",
             load_error: "Could not load words: ",
+            added_at: "Added",
         },
         Language::Ja => Text {
             app_title: "単語アーカイブ",
@@ -235,6 +239,7 @@ fn text(language: Language) -> Text {
             add_success: "アーカイブに追加しました。",
             save_success: "変更を保存しました。",
             load_error: "単語を読み込めません：",
+            added_at: "追加日時",
         },
     }
 }
@@ -690,6 +695,7 @@ fn WordCard(
     let record_for_edit = record.clone();
     let record_for_delete = record.clone();
     let status = record.status.clone();
+    let added_at = format_added_at(record.created_at, language);
     rsx! {
         article { class: "word-card",
             div { class: "word-card-main",
@@ -697,6 +703,7 @@ fn WordCard(
                 div {
                     h3 { "{record.word}" }
                     p { class: "source-host", "{host_label(&record.url)}" }
+                    p { class: "added-at", "{ui.added_at} · {added_at}" }
                 }
             }
             span { class: "status-pill {status_value(&status)}", "{status_label(&status, language)}" }
@@ -961,6 +968,21 @@ fn page_summary(language: Language, total: u32, page: u32, pages: u32) -> String
         Language::Zh => format!("共 {total} 条 · 第 {page} / {pages} 页"),
         Language::En => format!("{total} words · Page {page} / {pages}"),
         Language::Ja => format!("全 {total} 語 · {page} / {pages} ページ"),
+    }
+}
+
+fn format_added_at(timestamp: i64, language: Language) -> String {
+    let date = Date::new(&JsValue::from_f64(timestamp as f64 * 1_000.0));
+    let year = date.get_full_year();
+    let month = date.get_month() + 1;
+    let day = date.get_date();
+    let hour = date.get_hours();
+    let minute = date.get_minutes();
+
+    match language {
+        Language::Zh => format!("{year}年{month:02}月{day:02}日 {hour:02}:{minute:02}"),
+        Language::En => format!("{year}-{month:02}-{day:02} {hour:02}:{minute:02}"),
+        Language::Ja => format!("{year}年{month}月{day}日 {hour:02}:{minute:02}"),
     }
 }
 
