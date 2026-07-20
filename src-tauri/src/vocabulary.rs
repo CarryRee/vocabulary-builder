@@ -47,6 +47,7 @@ pub struct VocabularyWord {
     pub word: String,
     pub url: String,
     pub status: WordStatus,
+    pub phonetic: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -103,6 +104,7 @@ impl VocabularyRepository {
                     word TEXT NOT NULL,
                     url TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('unfamiliar', 'known', 'familiar')),
+                    phonetic TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -110,7 +112,9 @@ impl VocabularyRepository {
                     ON words(status, updated_at DESC);
                 ",
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        self.ensure_column("phonetic", "TEXT")?;
+        Ok(())
     }
 
     pub fn list(&self, request: WordListRequest) -> Result<WordPage, String> {
@@ -129,7 +133,7 @@ impl VocabularyRepository {
             let mut statement = self
                 .connection
                 .prepare(
-                    "SELECT id, word, url, status, created_at, updated_at
+                    "SELECT id, word, url, status, phonetic, created_at, updated_at
                      FROM words WHERE status = ?1
                      ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
                 )
@@ -147,7 +151,7 @@ impl VocabularyRepository {
             let mut statement = self
                 .connection
                 .prepare(
-                    "SELECT id, word, url, status, created_at, updated_at
+                    "SELECT id, word, url, status, phonetic, created_at, updated_at
                      FROM words ORDER BY updated_at DESC, word COLLATE NOCASE
                      LIMIT ?1 OFFSET ?2",
                 )
@@ -170,18 +174,20 @@ impl VocabularyRepository {
             word,
             url,
             status: input.status,
+            phonetic: None,
             created_at: now,
             updated_at: now,
         };
         self.connection
             .execute(
-                "INSERT INTO words (id, word, url, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO words (id, word, url, status, phonetic, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     record.id,
                     record.word,
                     record.url,
                     record.status.as_str(),
+                    record.phonetic,
                     record.created_at,
                     record.updated_at
                 ],
@@ -207,6 +213,26 @@ impl VocabularyRepository {
             .ok_or_else(|| "Updated word was not found.".to_string())
     }
 
+    pub fn save_pronunciation(
+        &self,
+        id: &str,
+        phonetic: Option<String>,
+    ) -> Result<VocabularyWord, String> {
+        let updated_at = timestamp()?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE words SET phonetic = ?1, updated_at = ?2 WHERE id = ?3",
+                params![phonetic, updated_at, id],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed == 0 {
+            return Err("Word for pronunciation was not found.".to_string());
+        }
+        self.find(id)?
+            .ok_or_else(|| "Saved pronunciation was not found.".to_string())
+    }
+
     pub fn delete(&self, id: &str) -> Result<(), String> {
         let changed = self
             .connection
@@ -221,7 +247,7 @@ impl VocabularyRepository {
     fn find(&self, id: &str) -> Result<Option<VocabularyWord>, String> {
         self.connection
             .query_row(
-                "SELECT id, word, url, status, created_at, updated_at FROM words WHERE id = ?1",
+                "SELECT id, word, url, status, phonetic, created_at, updated_at FROM words WHERE id = ?1",
                 [id],
                 row_to_word,
             )
@@ -243,6 +269,32 @@ impl VocabularyRepository {
         .map_err(|error| error.to_string())?;
         u32::try_from(total).map_err(|_| "Word count exceeds the supported range.".to_string())
     }
+
+    fn ensure_column(&self, column: &str, definition: &str) -> Result<(), String> {
+        if self.column_exists(column)? {
+            return Ok(());
+        }
+        self.connection
+            .execute(
+                &format!("ALTER TABLE words ADD COLUMN {column} {definition}"),
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn column_exists(&self, column: &str) -> Result<bool, String> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(words)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(columns.iter().any(|existing| existing == column))
+    }
 }
 
 fn row_to_word(row: &rusqlite::Row<'_>) -> rusqlite::Result<VocabularyWord> {
@@ -252,8 +304,9 @@ fn row_to_word(row: &rusqlite::Row<'_>) -> rusqlite::Result<VocabularyWord> {
         word: row.get(1)?,
         url: row.get(2)?,
         status: WordStatus::from_str(&status)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
+        phonetic: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -299,6 +352,9 @@ mod tests {
         let created = repository
             .create(input("ephemeral", WordStatus::Unfamiliar))
             .unwrap();
+        repository
+            .save_pronunciation(&created.id, Some("ɪˈfemərəl".to_string()))
+            .unwrap();
         assert_eq!(
             repository
                 .list(WordListRequest {
@@ -314,6 +370,7 @@ mod tests {
             .update(&created.id, input("ephemeral", WordStatus::Familiar))
             .unwrap();
         assert_eq!(updated.status, WordStatus::Familiar);
+        assert_eq!(updated.phonetic.as_deref(), Some("ɪˈfemərəl"));
         assert_eq!(
             repository
                 .list(WordListRequest {
@@ -430,5 +487,19 @@ mod tests {
             .words
             .iter()
             .all(|word| word.status == WordStatus::Known));
+    }
+
+    #[test]
+    fn stores_phonetic() {
+        let repository = VocabularyRepository::in_memory();
+        let created = repository
+            .create(input("hello", WordStatus::Unfamiliar))
+            .unwrap();
+
+        let enriched = repository
+            .save_pronunciation(&created.id, Some("həˈləʊ".to_string()))
+            .unwrap();
+
+        assert_eq!(enriched.phonetic.as_deref(), Some("həˈləʊ"));
     }
 }

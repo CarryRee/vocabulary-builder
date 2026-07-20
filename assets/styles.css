@@ -61,6 +61,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .archive-count strong { color: #254d52; font: 700 21px/1 Georgia, serif; }
 .header-tools { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
 .language-picker select { width: auto; min-height: 32px; padding: 5px 26px 5px 8px; color: #49666a; background: transparent; border-color: #c4d2ca; font-family: "Microsoft YaHei UI", "Noto Sans JP", system-ui, sans-serif; font-size: 12px; letter-spacing: 0; }
+.header-icon-button { display: grid; width: 32px; height: 32px; padding: 0; place-items: center; color: #49666a; background: transparent; border: 1px solid #c4d2ca; font-size: 16px; }
+.header-icon-button:hover { color: #fffdf8; background: #1d5e63; transform: translateY(-1px); }
 
 .workspace {
   display: grid;
@@ -95,7 +97,7 @@ input, select {
 input::placeholder { color: #94a29d; }
 
 .form-actions { display: flex; gap: 9px; margin-top: 17px; }
-.primary-button, .quiet-button, .filter-button, .card-button { border: 0; border-radius: 8px; transition: transform .16s ease, background .16s ease; }
+.primary-button, .quiet-button, .filter-button, .card-button, .header-icon-button { border: 0; border-radius: 8px; transition: transform .16s ease, background .16s ease; }
 .primary-button { flex: 1; padding: 11px 15px; color: #fffdf8; background: #1d5e63; font-weight: 700; }
 .primary-button:hover { background: #174b50; transform: translateY(-1px); }
 .quiet-button { padding: 10px 13px; color: #416268; background: transparent; border: 1px solid #aec1bb; }
@@ -111,6 +113,9 @@ input::placeholder { color: #94a29d; }
 .word-card { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; background: #fffdf8; border: 1px solid #e0dfd2; border-radius: 10px; box-shadow: 0 3px 0 rgba(25, 51, 58, .035); }
 .word-card-main { display: flex; gap: 10px; min-width: 0; align-items: center; }
 .word-card h3 { overflow: hidden; color: #19333a; font: 700 18px/1.15 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
+.pronunciation-line { display: flex; gap: 6px; align-items: center; min-width: 0; margin: 5px 0 0; color: #496a67; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; line-height: 1.25; }
+.phonetic-label { flex: 0 0 auto; padding: 2px 4px; color: #41675c; background: #e4eee6; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: .06em; }
+.phonetic-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-host { overflow: hidden; margin: 4px 0 0; color: #728580; font-family: ui-monospace, Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .added-at { margin: 3px 0 0; color: #8a9691; font-family: ui-monospace, Consolas, monospace; font-size: 10px; letter-spacing: .01em; }
 .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
@@ -137,6 +142,21 @@ input::placeholder { color: #94a29d; }
 .delete-actions .quiet-button { padding: 10px; }
 .delete-button { padding: 11px 10px; color: #fffdf8; background: #a84b3a; border: 0; border-radius: 8px; font-weight: 700; transition: background .16s ease, transform .16s ease; }
 .delete-button:hover { background: #8d382a; transform: translateY(-1px); }
+
+.settings-dialog { position: relative; width: min(100%, 540px); padding: 31px; overflow: hidden; color: #19333a; background: #fffdf8; border: 1px solid #cbd8d0; border-radius: 18px 18px 18px 5px; box-shadow: 12px 12px 0 rgba(63, 110, 98, .18), 0 24px 70px rgba(9, 27, 31, .3); }
+.settings-dialog::before { position: absolute; top: 0; right: 0; left: 0; height: 5px; background: #5f927d; content: ""; }
+.settings-dialog h2 { margin: 0; font: 700 25px/1.18 Georgia, "Songti SC", serif; letter-spacing: -.03em; }
+.settings-copy { margin: 11px 0 0; color: #627773; font-size: 13px; line-height: 1.55; }
+.settings-form { display: grid; gap: 9px; margin-top: 22px; }
+.settings-form label { color: #35545a; font-size: 13px; font-weight: 700; }
+.directory-display { min-height: 43px; margin: 0; padding: 10px 12px; overflow-wrap: anywhere; color: #29444a; background: #f0f5f1; border: 1px dashed #aebfb6; border-radius: 8px; font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; }
+.directory-display.empty { display: grid; place-items: center start; color: #81908b; font-family: inherit; font-style: italic; }
+.choose-directory-button { justify-self: start; padding: 8px 12px; color: #2c6559; background: #e7f0e9; border: 1px solid #9ab9aa; border-radius: 8px; font-weight: 700; transition: background .16s ease, transform .16s ease; }
+.choose-directory-button:hover { background: #d9e9de; transform: translateY(-1px); }
+.settings-hint, .settings-feedback { margin: 0; font-size: 12px; line-height: 1.5; }
+.settings-hint { color: #72817d; }.settings-feedback { padding: 8px 10px; color: #8a4e21; background: #fff1d6; border-left: 3px solid #d5a33d; }
+.settings-actions { display: grid; grid-template-columns: auto 1fr; gap: 10px; margin-top: 14px; }
+.settings-actions .primary-button { min-width: 0; }.settings-actions button:disabled, .choose-directory-button:disabled { cursor: not-allowed; opacity: .6; transform: none; }
 
 .empty-state { display: grid; min-height: 300px; place-content: center; text-align: center; color: #71837e; }
 .empty-state p { margin: 7px 0 0; font-size: 13px; }.empty-glyph { margin-bottom: 10px; font-size: 39px; color: #b5c4b9; }

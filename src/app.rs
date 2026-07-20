@@ -88,6 +88,7 @@ struct Text {
     previous: &'static str,
     next: &'static str,
     preview: &'static str,
+    phonetic: &'static str,
     edit: &'static str,
     delete: &'static str,
     delete_eyebrow: &'static str,
@@ -99,6 +100,16 @@ struct Text {
     save_success: &'static str,
     load_error: &'static str,
     added_at: &'static str,
+    settings: &'static str,
+    storage_eyebrow: &'static str,
+    storage_title: &'static str,
+    storage_copy: &'static str,
+    storage_directory: &'static str,
+    storage_choose: &'static str,
+    storage_empty: &'static str,
+    storage_hint: &'static str,
+    storage_save: &'static str,
+    storage_success: &'static str,
 }
 
 fn text(language: Language) -> Text {
@@ -137,6 +148,7 @@ fn text(language: Language) -> Text {
             previous: "← 上一页",
             next: "下一页 →",
             preview: "预览",
+            phonetic: "音标",
             edit: "编辑",
             delete: "删除",
             delete_eyebrow: "删除词卡",
@@ -148,6 +160,16 @@ fn text(language: Language) -> Text {
             save_success: "已保存修改。",
             load_error: "无法读取单词：",
             added_at: "添加于",
+            settings: "数据目录设置",
+            storage_eyebrow: "本地存储",
+            storage_title: "词汇数据库保存位置",
+            storage_copy: "保存后会复制现有词汇到新目录，并立即使用新数据库。",
+            storage_directory: "数据目录",
+            storage_choose: "选择文件夹",
+            storage_empty: "尚未选择目录",
+            storage_hint: "请选择可写入的文件夹；目录中不能已有 vocabulary.db。",
+            storage_save: "保存并迁移",
+            storage_success: "词汇数据库已迁移到新目录。",
         },
         Language::En => Text {
             app_title: "Vocabulary Archive",
@@ -183,6 +205,7 @@ fn text(language: Language) -> Text {
             previous: "← Previous",
             next: "Next →",
             preview: "Open",
+            phonetic: "IPA",
             edit: "Edit",
             delete: "Delete",
             delete_eyebrow: "Delete word card",
@@ -194,6 +217,16 @@ fn text(language: Language) -> Text {
             save_success: "Changes saved.",
             load_error: "Could not load words: ",
             added_at: "Added",
+            settings: "Data directory settings",
+            storage_eyebrow: "LOCAL STORAGE",
+            storage_title: "Vocabulary database location",
+            storage_copy: "Saving copies existing words to the new directory and switches to it immediately.",
+            storage_directory: "Data directory",
+            storage_choose: "Choose folder",
+            storage_empty: "No folder selected",
+            storage_hint: "Choose a writable folder. It cannot already contain vocabulary.db.",
+            storage_save: "Save and migrate",
+            storage_success: "The vocabulary database has moved to the new directory.",
         },
         Language::Ja => Text {
             app_title: "単語アーカイブ",
@@ -229,6 +262,7 @@ fn text(language: Language) -> Text {
             previous: "← 前へ",
             next: "次へ →",
             preview: "開く",
+            phonetic: "発音記号",
             edit: "編集",
             delete: "削除",
             delete_eyebrow: "単語カードを削除",
@@ -240,6 +274,16 @@ fn text(language: Language) -> Text {
             save_success: "変更を保存しました。",
             load_error: "単語を読み込めません：",
             added_at: "追加日時",
+            settings: "データ保存先の設定",
+            storage_eyebrow: "LOCAL STORAGE",
+            storage_title: "単語データベースの保存先",
+            storage_copy: "保存すると既存の単語を新しいフォルダーにコピーし、すぐに切り替えます。",
+            storage_directory: "データフォルダー",
+            storage_choose: "フォルダーを選択",
+            storage_empty: "フォルダーが選択されていません",
+            storage_hint: "書き込み可能なフォルダーを選択してください。vocabulary.db があるフォルダーは選べません。",
+            storage_save: "保存して移行",
+            storage_success: "単語データベースを新しいフォルダーへ移行しました。",
         },
     }
 }
@@ -251,6 +295,7 @@ struct VocabularyWord {
     word: String,
     url: String,
     status: WordStatus,
+    phonetic: Option<String>,
     created_at: i64,
     updated_at: i64,
 }
@@ -297,6 +342,22 @@ struct UrlArgs {
     url: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DataDirectory {
+    directory: String,
+}
+
+#[derive(Serialize)]
+struct DataDirectoryArgs {
+    directory: String,
+}
+
+#[derive(Serialize)]
+struct DirectoryPickerArgs {
+    title: String,
+}
+
 pub fn App() -> Element {
     let mut words = use_signal(Vec::<VocabularyWord>::new);
     let mut total_words = use_signal(|| 0_u32);
@@ -311,6 +372,16 @@ pub fn App() -> Element {
     let mut draft_word = use_signal(String::new);
     let mut draft_url = use_signal(String::new);
     let mut draft_status = use_signal(|| WordStatus::Unfamiliar);
+    let mut settings_open = use_signal(|| false);
+    let mut data_directory = use_signal(String::new);
+
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(settings) = get_data_directory().await {
+                data_directory.set(settings.directory);
+            }
+        });
+    });
 
     use_effect(move || {
         let _ = refresh_key();
@@ -410,6 +481,14 @@ pub fn App() -> Element {
                             option { value: "en", selected: active_language == Language::En, "English" }
                             option { value: "ja", selected: active_language == Language::Ja, "日本語" }
                         }
+                    }
+                    button {
+                        class: "header-icon-button",
+                        r#type: "button",
+                        title: "{ui.settings}",
+                        "aria-label": "{ui.settings}",
+                        onclick: move |_| settings_open.set(true),
+                        "⚙"
                     }
                 }
             }
@@ -661,6 +740,18 @@ pub fn App() -> Element {
                     },
                 }
             }
+            if settings_open() {
+                DataDirectoryDialog {
+                    directory: data_directory(),
+                    language: active_language,
+                    on_close: move |_| settings_open.set(false),
+                    on_saved: move |directory| {
+                        data_directory.set(directory);
+                        settings_open.set(false);
+                        notice.set(ui.storage_success.to_string());
+                    },
+                }
+            }
         }
     }
 }
@@ -702,6 +793,12 @@ fn WordCard(
                 span { class: "status-dot {status_value(&status)}" }
                 div {
                     h3 { "{record.word}" }
+                    if let Some(phonetic) = record.phonetic.as_deref() {
+                        p { class: "pronunciation-line",
+                            span { class: "phonetic-label", "{ui.phonetic}" }
+                            span { class: "phonetic-value", "{phonetic}" }
+                        }
+                    }
                     p { class: "source-host", "{host_label(&record.url)}" }
                     p { class: "added-at", "{ui.added_at} · {added_at}" }
                 }
@@ -757,6 +854,118 @@ fn DeleteDialog(
     }
 }
 
+#[component]
+fn DataDirectoryDialog(
+    directory: String,
+    language: Language,
+    on_close: EventHandler<MouseEvent>,
+    on_saved: EventHandler<String>,
+) -> Element {
+    let ui = text(language);
+    let mut directory_input = use_signal(|| directory);
+    let mut feedback = use_signal(String::new);
+    let mut is_saving = use_signal(|| false);
+
+    rsx! {
+        div { class: "delete-overlay", role: "presentation",
+            section {
+                class: "settings-dialog",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "settings-dialog-title",
+                p { class: "eyebrow", "{ui.storage_eyebrow}" }
+                h2 { id: "settings-dialog-title", "{ui.storage_title}" }
+                p { class: "settings-copy", "{ui.storage_copy}" }
+                form {
+                    class: "settings-form",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        let directory = directory_input();
+                        is_saving.set(true);
+                        feedback.set(String::new());
+                        spawn(async move {
+                            frontend_info(format!(
+                                "frontend data directory migration submitted: directory={directory:?}"
+                            ))
+                            .await;
+                            match set_data_directory(directory).await {
+                                Ok(settings) => {
+                                    frontend_info(format!(
+                                        "frontend data directory migration completed: directory={:?}",
+                                        settings.directory
+                                    ))
+                                    .await;
+                                    on_saved.call(settings.directory);
+                                }
+                                Err(error) => {
+                                    frontend_error(format!(
+                                        "frontend data directory migration failed: error={error}"
+                                    ))
+                                    .await;
+                                    feedback.set(localized_error(&error, language));
+                                }
+                            }
+                            is_saving.set(false);
+                        });
+                    },
+                    label { "{ui.storage_directory}" }
+                    p {
+                        class: if directory_input().is_empty() { "directory-display empty" } else { "directory-display" },
+                        if directory_input().is_empty() { "{ui.storage_empty}" } else { "{directory_input}" }
+                    }
+                    button {
+                        class: "choose-directory-button",
+                        r#type: "button",
+                        disabled: is_saving(),
+                        onclick: move |_| {
+                            let title = ui.storage_choose.to_string();
+                            spawn(async move {
+                                frontend_info("frontend data directory picker opened".to_string()).await;
+                                match choose_data_directory(title).await {
+                                    Ok(Some(directory)) => {
+                                        directory_input.set(directory);
+                                        feedback.set(String::new());
+                                    }
+                                    Ok(None) => {
+                                        frontend_info("frontend data directory picker cancelled".to_string()).await;
+                                    }
+                                    Err(error) => {
+                                        frontend_error(format!(
+                                            "frontend data directory picker failed: error={error}"
+                                        ))
+                                        .await;
+                                        feedback.set(localized_error(&error, language));
+                                    }
+                                }
+                            });
+                        },
+                        "{ui.storage_choose}"
+                    }
+                    p { class: "settings-hint", "{ui.storage_hint}" }
+                    if !feedback().is_empty() {
+                        p { class: "settings-feedback", role: "status", "{feedback}" }
+                    }
+                    div { class: "settings-actions",
+                        button {
+                            class: "quiet-button",
+                            r#type: "button",
+                            disabled: is_saving(),
+                            onclick: move |event| on_close.call(event),
+                            "{ui.cancel}"
+                        }
+                        button {
+                            class: "primary-button",
+                            r#type: "submit",
+                            disabled: is_saving() || directory_input().is_empty(),
+                            if is_saving() { "…" } else { "{ui.storage_save}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn log_filter_change(
     value: String,
     status_filter: &mut Signal<String>,
@@ -792,6 +1001,18 @@ async fn open_source_url(url: String) -> Result<(), String> {
     invoke_void("open_source_url", &UrlArgs { url }).await
 }
 
+async fn get_data_directory() -> Result<DataDirectory, String> {
+    invoke_json("get_data_directory", &()).await
+}
+
+async fn choose_data_directory(title: String) -> Result<Option<String>, String> {
+    invoke_json("choose_data_directory", &DirectoryPickerArgs { title }).await
+}
+
+async fn set_data_directory(directory: String) -> Result<DataDirectory, String> {
+    invoke_json("set_data_directory", &DataDirectoryArgs { directory }).await
+}
+
 async fn frontend_info(message: String) {
     let _ = log_info(&message).await;
 }
@@ -823,11 +1044,13 @@ fn js_error_message(error: JsValue) -> String {
 
 fn localized_error(error: &str, language: Language) -> String {
     let message = match error {
-        "词汇数据库暂时不可用。" => match language {
-            Language::Zh => "词汇数据库暂时不可用。",
-            Language::En => "The vocabulary database is temporarily unavailable.",
-            Language::Ja => "単語データベースは一時的に利用できません。",
-        },
+        "词汇数据库暂时不可用。" | "Vocabulary database is temporarily unavailable." => {
+            match language {
+                Language::Zh => "词汇数据库暂时不可用。",
+                Language::En => "The vocabulary database is temporarily unavailable.",
+                Language::Ja => "単語データベースは一時的に利用できません。",
+            }
+        }
         "Page number must start at 1." => match language {
             Language::Zh => "页码必须从 1 开始。",
             Language::En => "The page number must start at 1.",
@@ -885,6 +1108,38 @@ fn localized_error(error: &str, language: Language) -> String {
                 "Cannot connect to the application service. Restart the app completely."
             }
             Language::Ja => "アプリサービスに接続できません。アプリを完全に再起動してください。",
+        },
+        "Data directory must be an absolute path." => match language {
+            Language::Zh => "请输入绝对路径，例如 D:\\VocabularyBuilderData。",
+            Language::En => "Enter an absolute path, for example D:\\VocabularyBuilderData.",
+            Language::Ja => "D:\\VocabularyBuilderData のような絶対パスを入力してください。",
+        },
+        "The selected directory already contains vocabulary.db." => match language {
+            Language::Zh => "该目录已包含 vocabulary.db，请选择新的空目录。",
+            Language::En => {
+                "This directory already contains vocabulary.db. Choose a new empty directory."
+            }
+            Language::Ja => {
+                "このフォルダーには vocabulary.db が既にあります。新しい空のフォルダーを選択してください。"
+            }
+        },
+        "The copied vocabulary database could not be opened." => match language {
+            Language::Zh => "无法验证复制后的词汇数据库，原数据库保持不变。",
+            Language::En => {
+                "The copied vocabulary database could not be verified. The original database was kept."
+            }
+            Language::Ja => {
+                "コピーした単語データベースを確認できませんでした。元のデータベースは保持されています。"
+            }
+        },
+        "Failed to save the data directory setting." => match language {
+            Language::Zh => "无法保存数据目录设置，原数据库保持不变。",
+            Language::En => {
+                "The data directory setting could not be saved. The original database was kept."
+            }
+            Language::Ja => {
+                "データ保存先を保存できませんでした。元のデータベースは保持されています。"
+            }
         },
         _ => match language {
             Language::Zh => "操作未完成，请稍后重试。",
