@@ -37,23 +37,29 @@ struct DataDirectory {
 fn list_words(
     state: State<'_, AppState>,
     status: Option<WordStatus>,
+    query: Option<String>,
     page: u32,
 ) -> Result<WordPage, String> {
-    log::info!("list_words requested: status={status:?}, page={page}");
+    log::info!("list_words requested: status={status:?}, query={query:?}, page={page}");
     let requested_status = status.clone();
+    let requested_query = query.clone();
     let result = access_repository(&state, |repository| {
-        repository.list(WordListRequest { status, page })
+        repository.list(WordListRequest {
+            status,
+            query,
+            page,
+        })
     });
 
     match &result {
         Ok(word_page) => log::info!(
-            "list_words completed: page={page}, returned={}, total={}",
+            "list_words completed: query={requested_query:?}, page={page}, returned={}, total={}",
             word_page.words.len(),
             word_page.total
         ),
         Err(error) => {
             log::error!(
-                "list_words failed: status={requested_status:?}, page={page}, error={error}"
+                "list_words failed: status={requested_status:?}, query={requested_query:?}, page={page}, error={error}"
             )
         }
     }

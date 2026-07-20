@@ -104,6 +104,13 @@ input::placeholder { color: #94a29d; }
 .notice { margin: 19px 0 0; padding: 10px; color: #6c5419; background: #fff5ce; border-left: 3px solid #d5a33d; border-radius: 3px; font-size: 13px; line-height: 1.5; }
 
 .library-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 15px; margin-bottom: 23px; }
+.library-controls { display: grid; gap: 8px; justify-items: end; min-width: min(100%, 270px); }
+.word-search { position: relative; width: min(100%, 270px); }
+.word-search input { min-height: 34px; padding: 7px 34px 7px 10px; border-radius: 7px; font-size: 12px; }
+.word-search input:focus { outline: 2px solid rgba(47, 111, 106, .38); outline-offset: 2px; }
+.clear-search-button { position: absolute; top: 50%; right: 5px; display: grid; width: 24px; height: 24px; padding: 0; place-items: center; color: #55716e; background: transparent; border: 0; border-radius: 50%; font: 20px/.9 Georgia, serif; transform: translateY(-50%); }
+.clear-search-button:hover { color: #fffdf8; background: #547c75; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .filter-button { padding: 7px 9px; color: #597176; background: transparent; font-size: 12px; }
 .filter-button:hover, .filter-button.active { color: #19333a; background: #dce8df; }
@@ -164,7 +171,7 @@ input::placeholder { color: #94a29d; }
 @media (max-width: 720px) {
   .app-shell { padding: 18px; }.masthead { grid-template-columns: auto 1fr; }.archive-count { display: none; }.header-tools { justify-self: end; }
   .workspace { grid-template-columns: 1fr; }.entry-panel { border-right: 0; border-bottom: 1px dashed #aec1bb; }
-  .library-toolbar { display: block; }.filter-tabs { justify-content: flex-start; margin-top: 14px; }
+  .library-toolbar { display: block; }.library-controls { justify-items: stretch; min-width: 0; margin-top: 14px; }.word-search { width: 100%; }.filter-tabs { justify-content: flex-start; }
   .word-card { grid-template-columns: minmax(0, 1fr) auto; }.card-actions { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }

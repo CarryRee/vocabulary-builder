@@ -64,6 +64,8 @@ pub struct WordInput {
 #[serde(rename_all = "camelCase")]
 pub struct WordListRequest {
     pub status: Option<WordStatus>,
+    #[serde(default)]
+    pub query: Option<String>,
     pub page: u32,
 }
 
@@ -122,7 +124,9 @@ impl VocabularyRepository {
             return Err("Page number must start at 1.".to_string());
         }
 
-        let total = self.count(request.status.as_ref())?;
+        let query = normalize_search_query(request.query);
+        let search_pattern = query.as_deref().map(search_pattern);
+        let total = self.count(request.status.as_ref(), search_pattern.as_deref())?;
         let offset = (u64::from(request.page) - 1)
             .checked_mul(u64::from(WORDS_PER_PAGE))
             .ok_or_else(|| "Page number is out of range.".to_string())?;
@@ -130,19 +134,56 @@ impl VocabularyRepository {
             i64::try_from(offset).map_err(|_| "Page number is out of range.".to_string())?;
         let mut words = Vec::new();
         if let Some(status) = request.status {
+            if let Some(search_pattern) = search_pattern.as_deref() {
+                let mut statement = self
+                    .connection
+                    .prepare(
+                        "SELECT id, word, url, status, phonetic, created_at, updated_at
+                         FROM words
+                         WHERE status = ?1 AND word COLLATE NOCASE LIKE ?2 ESCAPE '\\'
+                         ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?3 OFFSET ?4",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let rows = statement
+                    .query_map(
+                        params![status.as_str(), search_pattern, WORDS_PER_PAGE, offset],
+                        row_to_word,
+                    )
+                    .map_err(|error| error.to_string())?;
+                for row in rows {
+                    words.push(row.map_err(|error| error.to_string())?);
+                }
+            } else {
+                let mut statement = self
+                    .connection
+                    .prepare(
+                        "SELECT id, word, url, status, phonetic, created_at, updated_at
+                     FROM words WHERE status = ?1
+                     ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let rows = statement
+                    .query_map(
+                        params![status.as_str(), WORDS_PER_PAGE, offset],
+                        row_to_word,
+                    )
+                    .map_err(|error| error.to_string())?;
+                for row in rows {
+                    words.push(row.map_err(|error| error.to_string())?);
+                }
+            }
+        } else if let Some(search_pattern) = search_pattern.as_deref() {
             let mut statement = self
                 .connection
                 .prepare(
                     "SELECT id, word, url, status, phonetic, created_at, updated_at
-                     FROM words WHERE status = ?1
+                     FROM words
+                     WHERE word COLLATE NOCASE LIKE ?1 ESCAPE '\\'
                      ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
                 )
                 .map_err(|error| error.to_string())?;
             let rows = statement
-                .query_map(
-                    params![status.as_str(), WORDS_PER_PAGE, offset],
-                    row_to_word,
-                )
+                .query_map(params![search_pattern, WORDS_PER_PAGE, offset], row_to_word)
                 .map_err(|error| error.to_string())?;
             for row in rows {
                 words.push(row.map_err(|error| error.to_string())?);
@@ -255,16 +296,31 @@ impl VocabularyRepository {
             .map_err(|error| error.to_string())
     }
 
-    fn count(&self, status: Option<&WordStatus>) -> Result<u32, String> {
-        let total: i64 = if let Some(status) = status {
-            self.connection.query_row(
+    fn count(
+        &self,
+        status: Option<&WordStatus>,
+        search_pattern: Option<&str>,
+    ) -> Result<u32, String> {
+        let total: i64 = match (status, search_pattern) {
+            (Some(status), Some(search_pattern)) => self.connection.query_row(
+                "SELECT COUNT(*) FROM words
+                 WHERE status = ?1 AND word COLLATE NOCASE LIKE ?2 ESCAPE '\\'",
+                params![status.as_str(), search_pattern],
+                |row| row.get(0),
+            ),
+            (Some(status), None) => self.connection.query_row(
                 "SELECT COUNT(*) FROM words WHERE status = ?1",
                 [status.as_str()],
                 |row| row.get(0),
-            )
-        } else {
-            self.connection
-                .query_row("SELECT COUNT(*) FROM words", [], |row| row.get(0))
+            ),
+            (None, Some(search_pattern)) => self.connection.query_row(
+                "SELECT COUNT(*) FROM words WHERE word COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+                [search_pattern],
+                |row| row.get(0),
+            ),
+            (None, None) => self
+                .connection
+                .query_row("SELECT COUNT(*) FROM words", [], |row| row.get(0)),
         }
         .map_err(|error| error.to_string())?;
         u32::try_from(total).map_err(|_| "Word count exceeds the supported range.".to_string())
@@ -295,6 +351,21 @@ impl VocabularyRepository {
             .map_err(|error| error.to_string())?;
         Ok(columns.iter().any(|existing| existing == column))
     }
+}
+
+fn normalize_search_query(query: Option<String>) -> Option<String> {
+    query.and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn search_pattern(query: &str) -> String {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
 }
 
 fn row_to_word(row: &rusqlite::Row<'_>) -> rusqlite::Result<VocabularyWord> {
@@ -346,6 +417,14 @@ mod tests {
         }
     }
 
+    fn list_request(status: Option<WordStatus>, query: Option<&str>, page: u32) -> WordListRequest {
+        WordListRequest {
+            status,
+            query: query.map(ToString::to_string),
+            page,
+        }
+    }
+
     #[test]
     fn creates_filters_updates_and_deletes_words() {
         let repository = VocabularyRepository::in_memory();
@@ -357,10 +436,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             repository
-                .list(WordListRequest {
-                    status: Some(WordStatus::Unfamiliar),
-                    page: 1,
-                })
+                .list(list_request(Some(WordStatus::Unfamiliar), None, 1))
                 .unwrap()
                 .total,
             1
@@ -373,20 +449,14 @@ mod tests {
         assert_eq!(updated.phonetic.as_deref(), Some("ɪˈfemərəl"));
         assert_eq!(
             repository
-                .list(WordListRequest {
-                    status: Some(WordStatus::Unfamiliar),
-                    page: 1,
-                })
+                .list(list_request(Some(WordStatus::Unfamiliar), None, 1))
                 .unwrap()
                 .total,
             0
         );
         assert_eq!(
             repository
-                .list(WordListRequest {
-                    status: Some(WordStatus::Familiar),
-                    page: 1,
-                })
+                .list(list_request(Some(WordStatus::Familiar), None, 1))
                 .unwrap()
                 .total,
             1
@@ -394,13 +464,7 @@ mod tests {
 
         repository.delete(&created.id).unwrap();
         assert_eq!(
-            repository
-                .list(WordListRequest {
-                    status: None,
-                    page: 1,
-                })
-                .unwrap()
-                .total,
+            repository.list(list_request(None, None, 1)).unwrap().total,
             0
         );
     }
@@ -414,24 +478,14 @@ mod tests {
     #[test]
     fn paginates_words_and_filters_by_status() {
         let repository = VocabularyRepository::in_memory();
-        let empty_page = repository
-            .list(WordListRequest {
-                status: None,
-                page: 1,
-            })
-            .unwrap();
+        let empty_page = repository.list(list_request(None, None, 1)).unwrap();
         assert_eq!(empty_page.total, 0);
         assert!(empty_page.words.is_empty());
 
         repository
             .create(input("word-00", WordStatus::Known))
             .unwrap();
-        let one_word_page = repository
-            .list(WordListRequest {
-                status: None,
-                page: 1,
-            })
-            .unwrap();
+        let one_word_page = repository.list(list_request(None, None, 1)).unwrap();
         assert_eq!(one_word_page.total, 1);
         assert_eq!(one_word_page.words.len(), 1);
 
@@ -446,47 +500,84 @@ mod tests {
                 .unwrap();
         }
 
-        let ten_word_page = repository
-            .list(WordListRequest {
-                status: None,
-                page: 1,
-            })
-            .unwrap();
+        let ten_word_page = repository.list(list_request(None, None, 1)).unwrap();
         assert_eq!(ten_word_page.total, WORDS_PER_PAGE);
         assert_eq!(ten_word_page.words.len(), WORDS_PER_PAGE as usize);
 
         repository
             .create(input("word-10", WordStatus::Unfamiliar))
             .unwrap();
-        let first_page = repository
-            .list(WordListRequest {
-                status: None,
-                page: 1,
-            })
-            .unwrap();
+        let first_page = repository.list(list_request(None, None, 1)).unwrap();
         assert_eq!(first_page.total, 11);
         assert_eq!(first_page.words.len(), WORDS_PER_PAGE as usize);
 
-        let second_page = repository
-            .list(WordListRequest {
-                status: None,
-                page: 2,
-            })
-            .unwrap();
+        let second_page = repository.list(list_request(None, None, 2)).unwrap();
         assert_eq!(second_page.total, 11);
         assert_eq!(second_page.words.len(), 1);
 
         let known_words = repository
-            .list(WordListRequest {
-                status: Some(WordStatus::Known),
-                page: 1,
-            })
+            .list(list_request(Some(WordStatus::Known), None, 1))
             .unwrap();
         assert_eq!(known_words.total, 3);
         assert!(known_words
             .words
             .iter()
             .all(|word| word.status == WordStatus::Known));
+    }
+
+    #[test]
+    fn searches_words_across_pages_and_statuses() {
+        let repository = VocabularyRepository::in_memory();
+        repository
+            .create(input("Ephemeral", WordStatus::Unfamiliar))
+            .unwrap();
+        repository
+            .create(input("ephemeris", WordStatus::Familiar))
+            .unwrap();
+        repository
+            .create(input("transport", WordStatus::Known))
+            .unwrap();
+        repository
+            .create(input("100%_ready", WordStatus::Known))
+            .unwrap();
+
+        let partial_match = repository
+            .list(list_request(None, Some("  PHEM  "), 1))
+            .unwrap();
+        assert_eq!(partial_match.total, 2);
+        assert_eq!(partial_match.words.len(), 2);
+
+        let filtered_match = repository
+            .list(list_request(Some(WordStatus::Unfamiliar), Some("ephem"), 1))
+            .unwrap();
+        assert_eq!(filtered_match.total, 1);
+        assert_eq!(filtered_match.words[0].word, "Ephemeral");
+
+        let literal_wildcards = repository.list(list_request(None, Some("%_"), 1)).unwrap();
+        assert_eq!(literal_wildcards.total, 1);
+        assert_eq!(literal_wildcards.words[0].word, "100%_ready");
+
+        for index in 0..11 {
+            repository
+                .create(input(
+                    &format!("search-result-{index:02}"),
+                    WordStatus::Known,
+                ))
+                .unwrap();
+        }
+        let first_page = repository
+            .list(list_request(None, Some("search-result"), 1))
+            .unwrap();
+        assert_eq!(first_page.total, 11);
+        assert_eq!(first_page.words.len(), WORDS_PER_PAGE as usize);
+
+        let second_page = repository
+            .list(list_request(None, Some("search-result"), 2))
+            .unwrap();
+        assert_eq!(second_page.words.len(), 1);
+
+        let blank_query = repository.list(list_request(None, Some("   "), 1)).unwrap();
+        assert_eq!(blank_query.total, 15);
     }
 
     #[test]

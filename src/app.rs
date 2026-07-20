@@ -78,12 +78,19 @@ struct Text {
     cancel: &'static str,
     catalog: &'static str,
     status_filter: &'static str,
+    search: &'static str,
+    search_placeholder: &'static str,
+    clear_search: &'static str,
     all: &'static str,
     loading: &'static str,
     empty_title: &'static str,
     empty_copy: &'static str,
     filtered_empty_title: &'static str,
     filtered_empty_copy: &'static str,
+    search_empty_title: &'static str,
+    search_empty_copy: &'static str,
+    search_filtered_empty_title: &'static str,
+    search_filtered_empty_copy: &'static str,
     pagination: &'static str,
     previous: &'static str,
     next: &'static str,
@@ -138,12 +145,19 @@ fn text(language: Language) -> Text {
             cancel: "取消",
             catalog: "词汇目录",
             status_filter: "按熟悉度筛选",
+            search: "检索词条",
+            search_placeholder: "输入单词后按 Enter",
+            clear_search: "清除搜索",
             all: "全部",
             loading: "正在翻阅档案…",
             empty_title: "这里还没有词卡",
             empty_copy: "从左侧记下今天遇到的第一个陌生单词。",
             filtered_empty_title: "这个状态下还没有词卡",
             filtered_empty_copy: "切换状态筛选，或在左侧新增一张词卡。",
+            search_empty_title: "没有找到匹配的单词",
+            search_empty_copy: "换一个单词，或清除搜索后查看全部词卡。",
+            search_filtered_empty_title: "当前筛选下没有匹配的单词",
+            search_filtered_empty_copy: "调整熟悉度筛选，或清除搜索后继续浏览。",
             pagination: "词汇分页",
             previous: "← 上一页",
             next: "下一页 →",
@@ -195,12 +209,19 @@ fn text(language: Language) -> Text {
             cancel: "Cancel",
             catalog: "Word catalog",
             status_filter: "Filter by familiarity",
+            search: "Find a word",
+            search_placeholder: "Type a word and press Enter",
+            clear_search: "Clear search",
             all: "All",
             loading: "Opening the archive…",
             empty_title: "No word cards yet",
             empty_copy: "Add the first new word from the panel on the left.",
             filtered_empty_title: "No cards in this status",
             filtered_empty_copy: "Change the filter or add a word card from the left.",
+            search_empty_title: "No matching words",
+            search_empty_copy: "Try another word or clear the search to see every card.",
+            search_filtered_empty_title: "No matching words in this status",
+            search_filtered_empty_copy: "Change the familiarity filter or clear the search.",
             pagination: "Word pagination",
             previous: "← Previous",
             next: "Next →",
@@ -252,12 +273,19 @@ fn text(language: Language) -> Text {
             cancel: "キャンセル",
             catalog: "単語一覧",
             status_filter: "理解度で絞り込む",
+            search: "単語を検索",
+            search_placeholder: "単語を入力して Enter",
+            clear_search: "検索をクリア",
             all: "すべて",
             loading: "アーカイブを開いています…",
             empty_title: "単語カードはまだありません",
             empty_copy: "左側から最初の単語を記録しましょう。",
             filtered_empty_title: "この状態のカードはありません",
             filtered_empty_copy: "絞り込みを変更するか、左側から単語を追加してください。",
+            search_empty_title: "一致する単語がありません",
+            search_empty_copy: "別の単語で検索するか、検索をクリアしてすべてのカードを表示してください。",
+            search_filtered_empty_title: "この状態に一致する単語はありません",
+            search_filtered_empty_copy: "理解度の絞り込みを変更するか、検索をクリアしてください。",
             pagination: "単語ページ送り",
             previous: "← 前へ",
             next: "次へ →",
@@ -318,6 +346,7 @@ struct WordInput {
 #[derive(Serialize)]
 struct ListArgs {
     status: Option<WordStatus>,
+    query: Option<String>,
     page: u32,
 }
 
@@ -363,6 +392,8 @@ pub fn App() -> Element {
     let mut total_words = use_signal(|| 0_u32);
     let mut language = use_signal(|| Language::Zh);
     let mut status_filter = use_signal(|| "all".to_string());
+    let mut search_draft = use_signal(String::new);
+    let mut search_query = use_signal(String::new);
     let mut current_page = use_signal(|| 1_u32);
     let mut refresh_key = use_signal(|| 0_u32);
     let mut is_loading = use_signal(|| true);
@@ -387,15 +418,17 @@ pub fn App() -> Element {
         let _ = refresh_key();
         let selected_status = filter_to_status(&status_filter());
         let selected_status_for_log = selected_status.clone();
+        let selected_query = normalized_search_query(&search_query());
+        let selected_query_for_log = selected_query.clone();
         let requested_page = current_page();
         let selected_language = language();
         spawn(async move {
             is_loading.set(true);
             frontend_info(format!(
-                "frontend list request: status={selected_status:?}, page={requested_page}"
+                "frontend list request: status={selected_status:?}, query={selected_query_for_log:?}, page={requested_page}"
             ))
             .await;
-            match list_words(selected_status, requested_page).await {
+            match list_words(selected_status, selected_query, requested_page).await {
                 Ok(result) => {
                     let last_page = total_pages(result.total);
                     if result.total > 0 && requested_page > last_page {
@@ -407,7 +440,7 @@ pub fn App() -> Element {
                         current_page.set(last_page);
                     } else {
                         frontend_info(format!(
-                            "frontend list completed: page={requested_page}, returned={}, total={}",
+                            "frontend list completed: query={selected_query_for_log:?}, page={requested_page}, returned={}, total={}",
                             result.words.len(),
                             result.total
                         ))
@@ -418,7 +451,7 @@ pub fn App() -> Element {
                 }
                 Err(error) => {
                     frontend_error(format!(
-                        "frontend list failed: status={selected_status_for_log:?}, page={requested_page}, error={error}"
+                        "frontend list failed: status={selected_status_for_log:?}, query={selected_query_for_log:?}, page={requested_page}, error={error}"
                     ))
                     .await;
                     notice.set(format!(
@@ -439,6 +472,7 @@ pub fn App() -> Element {
     let word_count = total_words();
     let page_count = total_pages(word_count);
     let active_page = current_page();
+    let active_search_query = normalized_search_query(&search_query());
     let catalog_heading = filter_label(&status_filter(), active_language);
     let pagination_summary = page_summary(active_language, word_count, active_page, page_count);
     let deletion_candidate = pending_delete();
@@ -603,11 +637,57 @@ pub fn App() -> Element {
                             p { class: "eyebrow", "{ui.catalog}" }
                             h2 { "{catalog_heading}" }
                         }
-                        div { class: "filter-tabs", role: "group", "aria-label": "{ui.status_filter}",
-                            FilterButton { value: "all", label: ui.all, active: status_filter() == "all", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
-                            FilterButton { value: "unfamiliar", label: status_label(&WordStatus::Unfamiliar, active_language), active: status_filter() == "unfamiliar", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
-                            FilterButton { value: "known", label: status_label(&WordStatus::Known, active_language), active: status_filter() == "known", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
-                            FilterButton { value: "familiar", label: status_label(&WordStatus::Familiar, active_language), active: status_filter() == "familiar", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
+                        div { class: "library-controls",
+                            form {
+                                class: "word-search",
+                                role: "search",
+                                onsubmit: move |event| {
+                                    event.prevent_default();
+                                    let query = search_draft().trim().to_string();
+                                    if query == search_query() {
+                                        return;
+                                    }
+                                    search_query.set(query.clone());
+                                    current_page.set(1);
+                                    spawn(async move {
+                                        frontend_info(format!(
+                                            "frontend word search submitted: query={query:?}, page=1"
+                                        ))
+                                        .await;
+                                    });
+                                },
+                                label { class: "sr-only", r#for: "word-search", "{ui.search}" }
+                                input {
+                                    id: "word-search",
+                                    r#type: "search",
+                                    placeholder: "{ui.search_placeholder}",
+                                    value: "{search_draft}",
+                                    oninput: move |event| search_draft.set(event.value()),
+                                }
+                                if active_search_query.is_some() {
+                                    button {
+                                        class: "clear-search-button",
+                                        r#type: "button",
+                                        "aria-label": "{ui.clear_search}",
+                                        title: "{ui.clear_search}",
+                                        onclick: move |_| {
+                                            search_draft.set(String::new());
+                                            search_query.set(String::new());
+                                            current_page.set(1);
+                                            spawn(async move {
+                                                frontend_info("frontend word search cleared: page=1".to_string()).await;
+                                            });
+                                        },
+                                        "×"
+                                    }
+                                }
+                            }
+                            div { class: "filter-tabs", role: "group", "aria-label": "{ui.status_filter}",
+                                FilterButton { value: "all", label: ui.all, active: status_filter() == "all", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
+                                FilterButton { value: "unfamiliar", label: status_label(&WordStatus::Unfamiliar, active_language), active: status_filter() == "unfamiliar", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
+                                FilterButton { value: "known", label: status_label(&WordStatus::Known, active_language), active: status_filter() == "known", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
+                                FilterButton { value: "familiar", label: status_label(&WordStatus::Familiar, active_language), active: status_filter() == "familiar", on_select: move |value| { log_filter_change(value, &mut status_filter, &mut current_page); } }
+                            }
                         }
                     }
 
@@ -616,9 +696,15 @@ pub fn App() -> Element {
                     } else if words().is_empty() {
                         div { class: "empty-state",
                             span { class: "empty-glyph", "＋" }
-                            if word_count == 0 && status_filter() == "all" {
+                            if word_count == 0 && status_filter() == "all" && active_search_query.is_none() {
                                 h3 { "{ui.empty_title}" }
                                 p { "{ui.empty_copy}" }
+                            } else if active_search_query.is_some() && status_filter() == "all" {
+                                h3 { "{ui.search_empty_title}" }
+                                p { "{ui.search_empty_copy}" }
+                            } else if active_search_query.is_some() {
+                                h3 { "{ui.search_filtered_empty_title}" }
+                                p { "{ui.search_filtered_empty_copy}" }
                             } else if word_count == 0 {
                                 h3 { "{ui.filtered_empty_title}" }
                                 p { "{ui.filtered_empty_copy}" }
@@ -981,8 +1067,20 @@ fn log_filter_change(
     });
 }
 
-async fn list_words(status: Option<WordStatus>, page: u32) -> Result<WordPage, String> {
-    invoke_json("list_words", &ListArgs { status, page }).await
+async fn list_words(
+    status: Option<WordStatus>,
+    query: Option<String>,
+    page: u32,
+) -> Result<WordPage, String> {
+    invoke_json(
+        "list_words",
+        &ListArgs {
+            status,
+            query,
+            page,
+        },
+    )
+    .await
 }
 
 async fn create_word(input: WordInput) -> Result<VocabularyWord, String> {
@@ -1158,6 +1256,11 @@ fn filter_to_status(value: &str) -> Option<WordStatus> {
         "familiar" => Some(WordStatus::Familiar),
         _ => None,
     }
+}
+
+fn normalized_search_query(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn total_pages(total: u32) -> u32 {
