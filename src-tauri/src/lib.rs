@@ -96,7 +96,7 @@ async fn create_word(
         }
     };
 
-    Ok(lookup_missing_pronunciation(&state, created).await)
+    Ok(lookup_missing_dictionary_data(&state, created).await)
 }
 
 #[tauri::command]
@@ -129,16 +129,16 @@ async fn update_word(
         }
     };
 
-    Ok(lookup_missing_pronunciation(&state, updated).await)
+    Ok(lookup_missing_dictionary_data(&state, updated).await)
 }
 
-async fn lookup_missing_pronunciation(state: &AppState, word: VocabularyWord) -> VocabularyWord {
-    if word.phonetic.is_some() {
+async fn lookup_missing_dictionary_data(state: &AppState, word: VocabularyWord) -> VocabularyWord {
+    if word.phonetic.is_some() && !word.parts_of_speech.is_empty() {
         return word;
     }
 
     log::info!(
-        "pronunciation lookup requested: id={}, word={:?}",
+        "dictionary metadata lookup requested: id={}, word={:?}",
         word.id,
         word.word
     );
@@ -146,37 +146,44 @@ async fn lookup_missing_pronunciation(state: &AppState, word: VocabularyWord) ->
         Ok(pronunciation) => pronunciation,
         Err(error) => {
             log::warn!(
-                "pronunciation lookup skipped: id={}, word={:?}, error={error}",
+                "dictionary metadata lookup skipped: id={}, word={:?}, error={error}",
                 word.id,
                 word.word
             );
             return word;
         }
     };
-    let Some(phonetic) = pronunciation.phonetic else {
+    let phonetic = word.phonetic.clone().or(pronunciation.phonetic);
+    let parts_of_speech = if word.parts_of_speech.is_empty() {
+        pronunciation.parts_of_speech
+    } else {
+        word.parts_of_speech.clone()
+    };
+    if phonetic.is_none() && parts_of_speech.is_empty() {
         log::info!(
-            "pronunciation lookup completed without data: id={}, word={:?}",
+            "dictionary metadata lookup completed without data: id={}, word={:?}",
             word.id,
             word.word
         );
         return word;
-    };
+    }
 
     match access_repository(state, |repository| {
-        repository.save_pronunciation(&word.id, Some(phonetic))
+        repository.save_dictionary_data(&word.id, phonetic, parts_of_speech)
     }) {
         Ok(saved) => {
             log::info!(
-                "pronunciation saved: id={}, word={:?}, phonetic={:?}",
+                "dictionary metadata saved: id={}, word={:?}, phonetic={:?}, parts_of_speech={:?}",
                 saved.id,
                 saved.word,
-                saved.phonetic
+                saved.phonetic,
+                saved.parts_of_speech
             );
             saved
         }
         Err(error) => {
             log::error!(
-                "pronunciation save failed: id={}, word={:?}, error={error}",
+                "dictionary metadata save failed: id={}, word={:?}, error={error}",
                 word.id,
                 word.word
             );

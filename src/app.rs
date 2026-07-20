@@ -95,6 +95,7 @@ struct Text {
     previous: &'static str,
     next: &'static str,
     preview: &'static str,
+    parts_of_speech: &'static str,
     phonetic: &'static str,
     edit: &'static str,
     delete: &'static str,
@@ -162,6 +163,7 @@ fn text(language: Language) -> Text {
             previous: "← 上一页",
             next: "下一页 →",
             preview: "预览",
+            parts_of_speech: "词性",
             phonetic: "音标",
             edit: "编辑",
             delete: "删除",
@@ -226,6 +228,7 @@ fn text(language: Language) -> Text {
             previous: "← Previous",
             next: "Next →",
             preview: "Open",
+            parts_of_speech: "Part of speech",
             phonetic: "IPA",
             edit: "Edit",
             delete: "Delete",
@@ -290,6 +293,7 @@ fn text(language: Language) -> Text {
             previous: "← 前へ",
             next: "次へ →",
             preview: "開く",
+            parts_of_speech: "品詞",
             phonetic: "発音記号",
             edit: "編集",
             delete: "削除",
@@ -324,6 +328,7 @@ struct VocabularyWord {
     url: String,
     status: WordStatus,
     phonetic: Option<String>,
+    parts_of_speech: Vec<String>,
     created_at: i64,
     updated_at: i64,
 }
@@ -878,11 +883,19 @@ fn WordCard(
             div { class: "word-card-main",
                 span { class: "status-dot {status_value(&status)}" }
                 div {
-                    h3 { "{record.word}" }
-                    if let Some(phonetic) = record.phonetic.as_deref() {
-                        p { class: "pronunciation-line",
-                            span { class: "phonetic-label", "{ui.phonetic}" }
-                            span { class: "phonetic-value", "{phonetic}" }
+                    div { class: "word-title-line",
+                        h3 { "{record.word}" }
+                        if let Some(phonetic) = record.phonetic.as_deref() {
+                            span { class: "phonetic-inline", "aria-label": "{ui.phonetic}",
+                                span { class: "phonetic-value", "{phonetic}" }
+                            }
+                        }
+                    }
+                    if !record.parts_of_speech.is_empty() {
+                        p { class: "part-of-speech-line", "aria-label": "{ui.parts_of_speech}",
+                            for part_of_speech in &record.parts_of_speech {
+                                span { class: "part-of-speech-tag", "{part_of_speech}" }
+                            }
                         }
                     }
                     p { class: "source-host", "{host_label(&record.url)}" }

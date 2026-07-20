@@ -48,6 +48,7 @@ pub struct VocabularyWord {
     pub url: String,
     pub status: WordStatus,
     pub phonetic: Option<String>,
+    pub parts_of_speech: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -107,6 +108,7 @@ impl VocabularyRepository {
                     url TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('unfamiliar', 'known', 'familiar')),
                     phonetic TEXT,
+                    parts_of_speech TEXT NOT NULL DEFAULT '[]',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -116,6 +118,7 @@ impl VocabularyRepository {
             )
             .map_err(|error| error.to_string())?;
         self.ensure_column("phonetic", "TEXT")?;
+        self.ensure_column("parts_of_speech", "TEXT NOT NULL DEFAULT '[]'")?;
         Ok(())
     }
 
@@ -138,7 +141,7 @@ impl VocabularyRepository {
                 let mut statement = self
                     .connection
                     .prepare(
-                        "SELECT id, word, url, status, phonetic, created_at, updated_at
+                        "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
                          FROM words
                          WHERE status = ?1 AND word COLLATE NOCASE LIKE ?2 ESCAPE '\\'
                          ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?3 OFFSET ?4",
@@ -157,7 +160,7 @@ impl VocabularyRepository {
                 let mut statement = self
                     .connection
                     .prepare(
-                        "SELECT id, word, url, status, phonetic, created_at, updated_at
+                        "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
                      FROM words WHERE status = ?1
                      ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
                     )
@@ -176,7 +179,7 @@ impl VocabularyRepository {
             let mut statement = self
                 .connection
                 .prepare(
-                    "SELECT id, word, url, status, phonetic, created_at, updated_at
+                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
                      FROM words
                      WHERE word COLLATE NOCASE LIKE ?1 ESCAPE '\\'
                      ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
@@ -192,7 +195,7 @@ impl VocabularyRepository {
             let mut statement = self
                 .connection
                 .prepare(
-                    "SELECT id, word, url, status, phonetic, created_at, updated_at
+                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
                      FROM words ORDER BY updated_at DESC, word COLLATE NOCASE
                      LIMIT ?1 OFFSET ?2",
                 )
@@ -216,19 +219,21 @@ impl VocabularyRepository {
             url,
             status: input.status,
             phonetic: None,
+            parts_of_speech: Vec::new(),
             created_at: now,
             updated_at: now,
         };
         self.connection
             .execute(
-                "INSERT INTO words (id, word, url, status, phonetic, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO words (id, word, url, status, phonetic, parts_of_speech, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     record.id,
                     record.word,
                     record.url,
                     record.status.as_str(),
                     record.phonetic,
+                    "[]",
                     record.created_at,
                     record.updated_at
                 ],
@@ -254,17 +259,21 @@ impl VocabularyRepository {
             .ok_or_else(|| "Updated word was not found.".to_string())
     }
 
-    pub fn save_pronunciation(
+    pub fn save_dictionary_data(
         &self,
         id: &str,
         phonetic: Option<String>,
+        parts_of_speech: Vec<String>,
     ) -> Result<VocabularyWord, String> {
+        let parts_of_speech = normalize_parts_of_speech(parts_of_speech);
+        let parts_of_speech = serde_json::to_string(&parts_of_speech)
+            .map_err(|error| format!("Failed to serialize parts of speech: {error}"))?;
         let updated_at = timestamp()?;
         let changed = self
             .connection
             .execute(
-                "UPDATE words SET phonetic = ?1, updated_at = ?2 WHERE id = ?3",
-                params![phonetic, updated_at, id],
+                "UPDATE words SET phonetic = ?1, parts_of_speech = ?2, updated_at = ?3 WHERE id = ?4",
+                params![phonetic, parts_of_speech, updated_at, id],
             )
             .map_err(|error| error.to_string())?;
         if changed == 0 {
@@ -288,7 +297,7 @@ impl VocabularyRepository {
     fn find(&self, id: &str) -> Result<Option<VocabularyWord>, String> {
         self.connection
             .query_row(
-                "SELECT id, word, url, status, phonetic, created_at, updated_at FROM words WHERE id = ?1",
+                "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at FROM words WHERE id = ?1",
                 [id],
                 row_to_word,
             )
@@ -370,15 +379,39 @@ fn search_pattern(query: &str) -> String {
 
 fn row_to_word(row: &rusqlite::Row<'_>) -> rusqlite::Result<VocabularyWord> {
     let status: String = row.get(3)?;
+    let parts_of_speech: String = row.get(5)?;
+    let parts_of_speech = serde_json::from_str(&parts_of_speech).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            5,
+            rusqlite::types::Type::Text,
+            format!("Invalid parts of speech JSON: {error}").into(),
+        )
+    })?;
     Ok(VocabularyWord {
         id: row.get(0)?,
         word: row.get(1)?,
         url: row.get(2)?,
         status: WordStatus::from_str(&status)?,
         phonetic: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        parts_of_speech,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
+}
+
+fn normalize_parts_of_speech(parts_of_speech: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for part_of_speech in parts_of_speech {
+        let part_of_speech = part_of_speech.trim();
+        if !part_of_speech.is_empty()
+            && !normalized
+                .iter()
+                .any(|existing: &String| existing == part_of_speech)
+        {
+            normalized.push(part_of_speech.to_string());
+        }
+    }
+    normalized
 }
 
 fn validate_input(word: String, url: String) -> Result<(String, String), String> {
@@ -432,7 +465,11 @@ mod tests {
             .create(input("ephemeral", WordStatus::Unfamiliar))
             .unwrap();
         repository
-            .save_pronunciation(&created.id, Some("ɪˈfemərəl".to_string()))
+            .save_dictionary_data(
+                &created.id,
+                Some("ɪˈfemərəl".to_string()),
+                vec!["adjective".to_string()],
+            )
             .unwrap();
         assert_eq!(
             repository
@@ -447,6 +484,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.status, WordStatus::Familiar);
         assert_eq!(updated.phonetic.as_deref(), Some("ɪˈfemərəl"));
+        assert_eq!(updated.parts_of_speech, vec!["adjective".to_string()]);
         assert_eq!(
             repository
                 .list(list_request(Some(WordStatus::Unfamiliar), None, 1))
@@ -581,16 +619,24 @@ mod tests {
     }
 
     #[test]
-    fn stores_phonetic() {
+    fn stores_dictionary_data() {
         let repository = VocabularyRepository::in_memory();
         let created = repository
             .create(input("hello", WordStatus::Unfamiliar))
             .unwrap();
 
         let enriched = repository
-            .save_pronunciation(&created.id, Some("həˈləʊ".to_string()))
+            .save_dictionary_data(
+                &created.id,
+                Some("həˈləʊ".to_string()),
+                vec!["noun".to_string(), "verb".to_string(), "noun".to_string()],
+            )
             .unwrap();
 
         assert_eq!(enriched.phonetic.as_deref(), Some("həˈləʊ"));
+        assert_eq!(
+            enriched.parts_of_speech,
+            vec!["noun".to_string(), "verb".to_string()]
+        );
     }
 }

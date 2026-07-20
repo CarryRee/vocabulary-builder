@@ -119,10 +119,12 @@ input::placeholder { color: #94a29d; }
 .word-list { display: grid; max-height: 555px; gap: 7px; padding-right: 4px; overflow-y: auto; }
 .word-card { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; background: #fffdf8; border: 1px solid #e0dfd2; border-radius: 10px; box-shadow: 0 3px 0 rgba(25, 51, 58, .035); }
 .word-card-main { display: flex; gap: 10px; min-width: 0; align-items: center; }
-.word-card h3 { overflow: hidden; color: #19333a; font: 700 18px/1.15 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
-.pronunciation-line { display: flex; gap: 6px; align-items: center; min-width: 0; margin: 5px 0 0; color: #496a67; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; line-height: 1.25; }
-.phonetic-label { flex: 0 0 auto; padding: 2px 4px; color: #41675c; background: #e4eee6; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: .06em; }
-.phonetic-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.word-title-line { display: flex; gap: 4px; flex-wrap: nowrap; min-width: 0; align-items: baseline; }
+.word-card h3 { flex: 0 1 auto; min-width: 0; overflow: hidden; color: #19333a; font: 700 18px/1.15 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
+.phonetic-inline { display: flex; flex: 0 0 auto; align-items: center; color: #496a67; font: 11px/1.25 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: nowrap; }
+.part-of-speech-line { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin: 5px 0 0; color: #496a67; font: 10px/1.2 ui-monospace, "Cascadia Code", Consolas, monospace; }
+.part-of-speech-tag { padding: 2px 5px; color: #2e6259; background: #e3eee8; border: 1px solid #c4d9cc; border-radius: 99px; font-weight: 700; }
+.phonetic-value { overflow: visible; text-overflow: clip; white-space: nowrap; }
 .source-host { overflow: hidden; margin: 4px 0 0; color: #728580; font-family: ui-monospace, Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .added-at { margin: 3px 0 0; color: #8a9691; font-family: ui-monospace, Consolas, monospace; font-size: 10px; letter-spacing: .01em; }
 .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
