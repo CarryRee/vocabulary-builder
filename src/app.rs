@@ -898,7 +898,6 @@ fn WordCard(
                             }
                         }
                     }
-                    p { class: "source-host", "{host_label(&record.url)}" }
                     p { class: "added-at", "{ui.added_at} · {added_at}" }
                 }
             }
@@ -1355,15 +1354,4 @@ fn format_added_at(timestamp: i64, language: Language) -> String {
         Language::En => format!("{year}-{month:02}-{day:02} {hour:02}:{minute:02}"),
         Language::Ja => format!("{year}年{month}月{day}日 {hour:02}:{minute:02}"),
     }
-}
-
-fn host_label(value: &str) -> String {
-    value
-        .split("//")
-        .nth(1)
-        .unwrap_or(value)
-        .split('/')
-        .next()
-        .unwrap_or(value)
-        .to_string()
 }
