@@ -73,6 +73,15 @@ struct Text {
     unfamiliar_option: &'static str,
     known_option: &'static str,
     familiar_option: &'static str,
+    familiarity_test_eyebrow: &'static str,
+    familiarity_test_title: &'static str,
+    familiarity_test_copy: &'static str,
+    familiarity_test_input: &'static str,
+    familiarity_test_submit: &'static str,
+    familiarity_test_mismatch: &'static str,
+    familiarity_test_word_required: &'static str,
+    familiarity_test_available_after_save: &'static str,
+    familiarity_test_passed: &'static str,
     add: &'static str,
     save: &'static str,
     cancel: &'static str,
@@ -141,6 +150,15 @@ fn text(language: Language) -> Text {
             unfamiliar_option: "陌生 · 还需要认识",
             known_option: "了解 · 已有印象",
             familiar_option: "熟悉 · 可以复述",
+            familiarity_test_eyebrow: "熟悉度考核",
+            familiarity_test_title: "连续输入 3 次单词",
+            familiarity_test_copy: "准确输入当前单词三次，才能标记为“熟悉”。",
+            familiarity_test_input: "输入该单词",
+            familiarity_test_submit: "确认本次输入",
+            familiarity_test_mismatch: "输入不一致，本轮计数已重置。",
+            familiarity_test_word_required: "请先输入单词，再进行熟悉度考核。",
+            familiarity_test_available_after_save: "请先保存单词，再通过考核标记为“熟悉”。",
+            familiarity_test_passed: "考核通过，保存修改后将标记为“熟悉”。",
             add: "加入档案",
             save: "保存修改",
             cancel: "取消",
@@ -206,6 +224,15 @@ fn text(language: Language) -> Text {
             unfamiliar_option: "Unfamiliar · still learning",
             known_option: "Known · rings a bell",
             familiar_option: "Familiar · can recall it",
+            familiarity_test_eyebrow: "FAMILIARITY CHECK",
+            familiarity_test_title: "Type the word 3 times",
+            familiarity_test_copy: "Type the current word correctly three times to mark it as familiar.",
+            familiarity_test_input: "Type the word",
+            familiarity_test_submit: "Confirm this attempt",
+            familiarity_test_mismatch: "That did not match. The attempt count was reset.",
+            familiarity_test_word_required: "Enter a word before starting the familiarity check.",
+            familiarity_test_available_after_save: "Save the word first, then pass the check to mark it as familiar.",
+            familiarity_test_passed: "Check passed. Save changes to mark this word as familiar.",
             add: "Add to archive",
             save: "Save changes",
             cancel: "Cancel",
@@ -271,6 +298,15 @@ fn text(language: Language) -> Text {
             unfamiliar_option: "知らない · これから覚える",
             known_option: "知っている · 見覚えがある",
             familiar_option: "身についている · 思い出せる",
+            familiarity_test_eyebrow: "習熟度チェック",
+            familiarity_test_title: "単語を 3 回入力",
+            familiarity_test_copy: "現在の単語を正しく 3 回入力すると「身についている」にできます。",
+            familiarity_test_input: "この単語を入力",
+            familiarity_test_submit: "今回の入力を確認",
+            familiarity_test_mismatch: "一致しません。回数をリセットしました。",
+            familiarity_test_word_required: "習熟度チェックを始める前に単語を入力してください。",
+            familiarity_test_available_after_save: "先に単語を保存してから、チェックに合格すると「身についている」にできます。",
+            familiarity_test_passed: "チェックに合格しました。変更を保存すると「身についている」になります。",
             add: "アーカイブに追加",
             save: "変更を保存",
             cancel: "キャンセル",
@@ -404,6 +440,7 @@ pub fn App() -> Element {
     let mut is_loading = use_signal(|| true);
     let mut notice = use_signal(String::new);
     let mut pending_delete = use_signal(|| Option::<VocabularyWord>::None);
+    let mut familiarity_test_word = use_signal(|| Option::<String>::None);
     let mut editing_id = use_signal(|| Option::<String>::None);
     let mut draft_word = use_signal(String::new);
     let mut draft_url = use_signal(String::new);
@@ -472,8 +509,14 @@ pub fn App() -> Element {
 
     let current_status = draft_status();
     let editing = editing_id();
+    let can_take_familiarity_test = editing.is_some();
     let active_language = language();
     let ui = text(active_language);
+    let familiar_button_title = if can_take_familiarity_test {
+        ui.familiar_option
+    } else {
+        ui.familiarity_test_available_after_save
+    };
     let word_count = total_words();
     let page_count = total_pages(word_count);
     let active_page = current_page();
@@ -542,12 +585,17 @@ pub fn App() -> Element {
                         class: "word-form",
                         onsubmit: move |event| {
                             event.prevent_default();
+                            let target_id = editing_id();
+                            let status = if target_id.is_none() && draft_status() == WordStatus::Familiar {
+                                WordStatus::Unfamiliar
+                            } else {
+                                draft_status()
+                            };
                             let input = WordInput {
                                 word: draft_word(),
                                 url: draft_url(),
-                                status: draft_status(),
+                                status,
                             };
-                            let target_id = editing_id();
                             spawn(async move {
                                 let operation = if target_id.is_some() { "update" } else { "create" };
                                 frontend_info(format!(
@@ -603,14 +651,41 @@ pub fn App() -> Element {
                             required: true,
                             oninput: move |event| draft_url.set(event.value()),
                         }
-                        label { r#for: "status", "{ui.familiarity}" }
-                        select {
-                            id: "status",
-                            value: status_value(&current_status),
-                            onchange: move |event| draft_status.set(status_from_value(&event.value())),
-                            option { value: "unfamiliar", selected: current_status == WordStatus::Unfamiliar, "{ui.unfamiliar_option}" }
-                            option { value: "known", selected: current_status == WordStatus::Known, "{ui.known_option}" }
-                            option { value: "familiar", selected: current_status == WordStatus::Familiar, "{ui.familiar_option}" }
+                        p { class: "form-field-label", "{ui.familiarity}" }
+                        div { class: "status-options", role: "group", "aria-label": "{ui.familiarity}",
+                            button {
+                                class: if current_status == WordStatus::Unfamiliar { "status-option unfamiliar active" } else { "status-option unfamiliar" },
+                                r#type: "button",
+                                "aria-pressed": current_status == WordStatus::Unfamiliar,
+                                onclick: move |_| draft_status.set(WordStatus::Unfamiliar),
+                                "{ui.unfamiliar_option}"
+                            }
+                            button {
+                                class: if current_status == WordStatus::Known { "status-option known active" } else { "status-option known" },
+                                r#type: "button",
+                                "aria-pressed": current_status == WordStatus::Known,
+                                onclick: move |_| draft_status.set(WordStatus::Known),
+                                "{ui.known_option}"
+                            }
+                            button {
+                                class: if current_status == WordStatus::Familiar { "status-option familiar active" } else { "status-option familiar" },
+                                r#type: "button",
+                                "aria-pressed": current_status == WordStatus::Familiar,
+                                title: "{familiar_button_title}",
+                                disabled: !can_take_familiarity_test,
+                                onclick: move |_| {
+                                    if !can_take_familiarity_test || current_status == WordStatus::Familiar {
+                                        return;
+                                    }
+                                    let word = draft_word().trim().to_string();
+                                    if word.is_empty() {
+                                        notice.set(ui.familiarity_test_word_required.to_string());
+                                    } else {
+                                        familiarity_test_word.set(Some(word));
+                                    }
+                                },
+                                "{ui.familiar_option}"
+                            }
                         }
                         div { class: "form-actions",
                             button { class: "primary-button", r#type: "submit",
@@ -843,6 +918,21 @@ pub fn App() -> Element {
                     },
                 }
             }
+            if let Some(word) = familiarity_test_word() {
+                FamiliarityTestDialog {
+                    word,
+                    language: active_language,
+                    on_cancel: move |_| familiarity_test_word.set(None),
+                    on_passed: move |_| {
+                        draft_status.set(WordStatus::Familiar);
+                        familiarity_test_word.set(None);
+                        notice.set(ui.familiarity_test_passed.to_string());
+                        spawn(async move {
+                            frontend_info("frontend familiarity test passed".to_string()).await;
+                        });
+                    },
+                }
+            }
         }
     }
 }
@@ -945,6 +1035,96 @@ fn DeleteDialog(
                         r#type: "button",
                         onclick: move |_| on_confirm.call(record_for_delete.clone()),
                         "{ui.delete}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn FamiliarityTestDialog(
+    word: String,
+    language: Language,
+    on_cancel: EventHandler<MouseEvent>,
+    on_passed: EventHandler<()>,
+) -> Element {
+    let ui = text(language);
+    let mut attempt_input = use_signal(String::new);
+    let mut completed_attempts = use_signal(|| 0_u8);
+    let mut feedback = use_signal(String::new);
+
+    rsx! {
+        div { class: "delete-overlay", role: "presentation",
+            section {
+                class: "familiarity-test-dialog",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-labelledby": "familiarity-test-title",
+                p { class: "eyebrow", "{ui.familiarity_test_eyebrow}" }
+                h2 { id: "familiarity-test-title", "{ui.familiarity_test_title}" }
+                p { class: "familiarity-test-copy", "{ui.familiarity_test_copy}" }
+                div { class: "familiarity-test-progress", "aria-label": "{familiarity_test_progress(language, completed_attempts())}",
+                    for index in 0..3 {
+                        span { class: if index < usize::from(completed_attempts()) { "test-progress-mark complete" } else { "test-progress-mark" } }
+                    }
+                }
+                p { class: "familiarity-test-progress-copy", "{familiarity_test_progress(language, completed_attempts())}" }
+                form {
+                    class: "familiarity-test-form",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        if matches_familiarity_test(&word, &attempt_input()) {
+                            let next_attempt = completed_attempts().saturating_add(1);
+                            if next_attempt == 3 {
+                                on_passed.call(());
+                                return;
+                            }
+                            completed_attempts.set(next_attempt);
+                            attempt_input.set(String::new());
+                            feedback.set(String::new());
+                            let word_for_log = word.clone();
+                            spawn(async move {
+                                frontend_info(format!(
+                                    "frontend familiarity test attempt completed: word={word_for_log:?}, completed_attempts={next_attempt}"
+                                ))
+                                .await;
+                            });
+                        } else {
+                            completed_attempts.set(0);
+                            attempt_input.set(String::new());
+                            feedback.set(ui.familiarity_test_mismatch.to_string());
+                            let word_for_log = word.clone();
+                            spawn(async move {
+                                frontend_info(format!(
+                                    "frontend familiarity test attempt mismatched: word={word_for_log:?}"
+                                ))
+                                .await;
+                            });
+                        }
+                    },
+                    label { r#for: "familiarity-test-input", "{ui.familiarity_test_input}" }
+                    input {
+                        id: "familiarity-test-input",
+                        value: "{attempt_input}",
+                        autocomplete: "off",
+                        autocapitalize: "off",
+                        spellcheck: "false",
+                        autofocus: true,
+                        required: true,
+                        oninput: move |event| attempt_input.set(event.value()),
+                    }
+                    if !feedback().is_empty() {
+                        p { class: "familiarity-test-feedback", role: "status", "{feedback}" }
+                    }
+                    div { class: "familiarity-test-actions",
+                        button {
+                            class: "quiet-button",
+                            r#type: "button",
+                            onclick: move |event| on_cancel.call(event),
+                            "{ui.cancel}"
+                        }
+                        button { class: "primary-button", r#type: "submit", "{ui.familiarity_test_submit}" }
                     }
                 }
             }
@@ -1181,6 +1361,13 @@ fn localized_error(error: &str, language: Language) -> String {
             Language::En => "A word cannot exceed 120 characters.",
             Language::Ja => "単語は 120 文字以内にしてください。",
         },
+        "New words cannot be marked as familiar." => match language {
+            Language::Zh => "新单词不能直接标记为“熟悉”，请先保存后完成考核。",
+            Language::En => "New words must be saved first and pass the familiarity check.",
+            Language::Ja => {
+                "新しい単語を直接「身についている」にすることはできません。先に保存してからチェックを完了してください。"
+            }
+        },
         "A valid source URL is required." | "来源链接无效。" => match language {
             Language::Zh => "请输入有效的来源链接。",
             Language::En => "Enter a valid source URL.",
@@ -1275,12 +1462,21 @@ fn normalized_search_query(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn total_pages(total: u32) -> u32 {
-    total.div_ceil(WORDS_PER_PAGE).max(1)
+fn matches_familiarity_test(expected: &str, input: &str) -> bool {
+    expected.trim().eq_ignore_ascii_case(input.trim())
 }
 
-fn status_from_value(value: &str) -> WordStatus {
-    filter_to_status(value).unwrap_or(WordStatus::Unfamiliar)
+fn familiarity_test_progress(language: Language, completed_attempts: u8) -> String {
+    let completed_attempts = completed_attempts.min(3);
+    match language {
+        Language::Zh => format!("已完成 {completed_attempts}/3 次"),
+        Language::En => format!("{completed_attempts}/3 completed"),
+        Language::Ja => format!("{completed_attempts}/3 回完了"),
+    }
+}
+
+fn total_pages(total: u32) -> u32 {
+    total.div_ceil(WORDS_PER_PAGE).max(1)
 }
 
 fn status_value(status: &WordStatus) -> &'static str {
@@ -1353,5 +1549,16 @@ fn format_added_at(timestamp: i64, language: Language) -> String {
         Language::Zh => format!("{year}年{month:02}月{day:02}日 {hour:02}:{minute:02}"),
         Language::En => format!("{year}-{month:02}-{day:02} {hour:02}:{minute:02}"),
         Language::Ja => format!("{year}年{month}月{day}日 {hour:02}:{minute:02}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn familiarity_test_ignores_ascii_case_and_surrounding_whitespace() {
+        assert!(matches_familiarity_test("Ephemeral", "  ephemeral  "));
+        assert!(!matches_familiarity_test("ephemeral", "ephemera"));
     }
 }

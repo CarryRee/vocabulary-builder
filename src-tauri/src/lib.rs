@@ -78,6 +78,14 @@ async fn create_word(
         input.url,
         input.status
     );
+    if input.status == WordStatus::Familiar {
+        log::warn!(
+            "create_word rejected: new word cannot be marked familiar: word={:?}, url={:?}",
+            input.word,
+            input.url
+        );
+        return Err("New words cannot be marked as familiar.".to_string());
+    }
     let created = access_repository(&state, |repository| repository.create(input));
     let created = match created {
         Ok(word) => {
