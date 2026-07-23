@@ -12,7 +12,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_opener::OpenerExt;
 use vocabulary::{
-    VocabularyRepository, VocabularyWord, WordInput, WordListRequest, WordPage, WordStatus,
+    VocabularyRepository, VocabularyWord, WordInput, WordListRequest, WordPage, WordSort,
+    WordStatus,
 };
 
 struct AppState {
@@ -25,6 +26,7 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct StorageConfiguration {
     data_directory: Option<String>,
+    language: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,28 +40,34 @@ fn list_words(
     state: State<'_, AppState>,
     status: Option<WordStatus>,
     query: Option<String>,
+    sort: Option<WordSort>,
     page: u32,
 ) -> Result<WordPage, String> {
-    log::info!("list_words requested: status={status:?}, query={query:?}, page={page}");
+    let sort = sort.unwrap_or_default();
+    log::info!(
+        "list_words requested: status={status:?}, query={query:?}, sort={sort:?}, page={page}"
+    );
     let requested_status = status.clone();
     let requested_query = query.clone();
+    let requested_sort = sort.clone();
     let result = access_repository(&state, |repository| {
         repository.list(WordListRequest {
             status,
             query,
+            sort,
             page,
         })
     });
 
     match &result {
         Ok(word_page) => log::info!(
-            "list_words completed: query={requested_query:?}, page={page}, returned={}, total={}",
+            "list_words completed: query={requested_query:?}, sort={requested_sort:?}, page={page}, returned={}, total={}",
             word_page.words.len(),
             word_page.total
         ),
         Err(error) => {
             log::error!(
-                "list_words failed: status={requested_status:?}, query={requested_query:?}, page={page}, error={error}"
+                "list_words failed: status={requested_status:?}, query={requested_query:?}, sort={requested_sort:?}, page={page}, error={error}"
             )
         }
     }
@@ -251,6 +259,31 @@ fn get_data_directory(state: State<'_, AppState>) -> Result<DataDirectory, Strin
 }
 
 #[tauri::command]
+fn get_language_preference(state: State<'_, AppState>) -> Result<String, String> {
+    let configuration = load_storage_configuration(&state.settings_path)?;
+    let language = configuration
+        .language
+        .as_deref()
+        .and_then(|value| preferred_language(value).ok())
+        .unwrap_or("zh");
+    log::info!("language preference loaded: language={language}");
+    Ok(language.to_string())
+}
+
+#[tauri::command]
+fn set_language_preference(state: State<'_, AppState>, language: String) -> Result<(), String> {
+    let language = preferred_language(&language)?.to_string();
+    let mut configuration = load_storage_configuration(&state.settings_path)?;
+    configuration.language = Some(language.clone());
+    write_storage_configuration(&state.settings_path, &configuration).map_err(|error| {
+        log::error!("language preference save failed: language={language}, error={error}");
+        "Failed to save language preference.".to_string()
+    })?;
+    log::info!("language preference saved: language={language}");
+    Ok(())
+}
+
+#[tauri::command]
 async fn choose_data_directory(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -290,6 +323,7 @@ fn set_data_directory(
     if !directory.is_absolute() {
         return Err("Data directory must be an absolute path.".to_string());
     }
+    let mut configuration = load_storage_configuration(&state.settings_path)?;
 
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Failed to create data directory: {error}"))?;
@@ -338,7 +372,8 @@ fn set_data_directory(
         }
     };
 
-    if let Err(error) = write_storage_configuration(&state.settings_path, &directory) {
+    configuration.data_directory = Some(directory.to_string_lossy().into_owned());
+    if let Err(error) = write_storage_configuration(&state.settings_path, &configuration) {
         drop(next_repository);
         let _ = fs::remove_file(&target_database_path);
         restore_repository(&mut repository, &source_database_path);
@@ -394,19 +429,41 @@ fn load_storage_configuration(settings_path: &Path) -> Result<StorageConfigurati
     }
 }
 
-fn write_storage_configuration(settings_path: &Path, directory: &Path) -> Result<(), String> {
+fn write_storage_configuration(
+    settings_path: &Path,
+    configuration: &StorageConfiguration,
+) -> Result<(), String> {
     let parent = settings_path
         .parent()
         .ok_or_else(|| "Settings directory is unavailable.".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create settings directory: {error}"))?;
-    let configuration = StorageConfiguration {
-        data_directory: Some(directory.to_string_lossy().into_owned()),
-    };
-    let contents = serde_json::to_string_pretty(&configuration)
+    let contents = serde_json::to_string_pretty(configuration)
         .map_err(|error| format!("Failed to serialize data directory setting: {error}"))?;
     fs::write(settings_path, contents)
         .map_err(|error| format!("Failed to write data directory setting: {error}"))
+}
+
+fn preferred_language(value: &str) -> Result<&'static str, String> {
+    match value.trim() {
+        "zh" => Ok("zh"),
+        "en" => Ok("en"),
+        "ja" => Ok("ja"),
+        _ => Err("Unsupported language preference.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preferred_language;
+
+    #[test]
+    fn accepts_supported_language_preferences() {
+        assert_eq!(preferred_language("zh"), Ok("zh"));
+        assert_eq!(preferred_language(" en "), Ok("en"));
+        assert_eq!(preferred_language("ja"), Ok("ja"));
+        assert!(preferred_language("fr").is_err());
+    }
 }
 
 fn parse_source_url(value: &str) -> Result<url::Url, String> {
@@ -480,6 +537,8 @@ pub fn run() {
             delete_word,
             open_source_url,
             get_data_directory,
+            get_language_preference,
+            set_language_preference,
             choose_data_directory,
             set_data_directory
         ])

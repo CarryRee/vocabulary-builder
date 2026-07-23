@@ -28,6 +28,14 @@ enum WordStatus {
     Familiar,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WordSort {
+    UpdatedAtDesc,
+    UpdatedAtAsc,
+    WordAsc,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Language {
     Zh,
@@ -87,6 +95,10 @@ struct Text {
     cancel: &'static str,
     catalog: &'static str,
     status_filter: &'static str,
+    sort: &'static str,
+    sort_updated_at_desc: &'static str,
+    sort_updated_at_asc: &'static str,
+    sort_word_asc: &'static str,
     search: &'static str,
     search_placeholder: &'static str,
     clear_search: &'static str,
@@ -158,12 +170,16 @@ fn text(language: Language) -> Text {
             familiarity_test_mismatch: "输入不一致，本轮计数已重置。",
             familiarity_test_word_required: "请先输入单词，再进行熟悉度考核。",
             familiarity_test_available_after_save: "请先保存单词，再通过考核标记为“熟悉”。",
-            familiarity_test_passed: "考核通过，保存修改后将标记为“熟悉”。",
+            familiarity_test_passed: "考核通过，已自动保存为“熟悉”。",
             add: "加入档案",
             save: "保存修改",
             cancel: "取消",
             catalog: "词汇目录",
             status_filter: "按熟悉度筛选",
+            sort: "排序方式",
+            sort_updated_at_desc: "时间：新到旧",
+            sort_updated_at_asc: "时间：旧到新",
+            sort_word_asc: "单词：A–Z",
             search: "检索词条",
             search_placeholder: "输入单词后按 Enter",
             clear_search: "清除搜索",
@@ -232,12 +248,16 @@ fn text(language: Language) -> Text {
             familiarity_test_mismatch: "That did not match. The attempt count was reset.",
             familiarity_test_word_required: "Enter a word before starting the familiarity check.",
             familiarity_test_available_after_save: "Save the word first, then pass the check to mark it as familiar.",
-            familiarity_test_passed: "Check passed. Save changes to mark this word as familiar.",
+            familiarity_test_passed: "Check passed. This word was automatically saved as familiar.",
             add: "Add to archive",
             save: "Save changes",
             cancel: "Cancel",
             catalog: "Word catalog",
             status_filter: "Filter by familiarity",
+            sort: "Sort words",
+            sort_updated_at_desc: "Time: newest first",
+            sort_updated_at_asc: "Time: oldest first",
+            sort_word_asc: "Word: A–Z",
             search: "Find a word",
             search_placeholder: "Type a word and press Enter",
             clear_search: "Clear search",
@@ -306,12 +326,16 @@ fn text(language: Language) -> Text {
             familiarity_test_mismatch: "一致しません。回数をリセットしました。",
             familiarity_test_word_required: "習熟度チェックを始める前に単語を入力してください。",
             familiarity_test_available_after_save: "先に単語を保存してから、チェックに合格すると「身についている」にできます。",
-            familiarity_test_passed: "チェックに合格しました。変更を保存すると「身についている」になります。",
+            familiarity_test_passed: "チェックに合格しました。「身についている」として自動保存しました。",
             add: "アーカイブに追加",
             save: "変更を保存",
             cancel: "キャンセル",
             catalog: "単語一覧",
             status_filter: "理解度で絞り込む",
+            sort: "並び替え",
+            sort_updated_at_desc: "日時：新しい順",
+            sort_updated_at_asc: "日時：古い順",
+            sort_word_asc: "単語：A–Z",
             search: "単語を検索",
             search_placeholder: "単語を入力して Enter",
             clear_search: "検索をクリア",
@@ -388,6 +412,7 @@ struct WordInput {
 struct ListArgs {
     status: Option<WordStatus>,
     query: Option<String>,
+    sort: WordSort,
     page: u32,
 }
 
@@ -428,11 +453,18 @@ struct DirectoryPickerArgs {
     title: String,
 }
 
+#[derive(Serialize)]
+struct LanguageArgs {
+    language: String,
+}
+
 pub fn App() -> Element {
     let mut words = use_signal(Vec::<VocabularyWord>::new);
     let mut total_words = use_signal(|| 0_u32);
     let mut language = use_signal(|| Language::Zh);
     let mut status_filter = use_signal(|| "all".to_string());
+    let mut sort = use_signal(|| WordSort::UpdatedAtDesc);
+    let mut sort_menu_open = use_signal(|| false);
     let mut search_draft = use_signal(String::new);
     let mut search_query = use_signal(String::new);
     let mut current_page = use_signal(|| 1_u32);
@@ -457,20 +489,50 @@ pub fn App() -> Element {
     });
 
     use_effect(move || {
+        spawn(async move {
+            match get_language_preference().await {
+                Ok(value) => {
+                    let selected_language = Language::from_value(&value);
+                    language.set(selected_language);
+                    frontend_info(format!(
+                        "frontend language preference restored: language={}",
+                        selected_language.value()
+                    ))
+                    .await;
+                }
+                Err(error) => {
+                    frontend_error(format!(
+                        "frontend language preference restore failed: error={error}"
+                    ))
+                    .await;
+                }
+            }
+        });
+    });
+
+    use_effect(move || {
         let _ = refresh_key();
         let selected_status = filter_to_status(&status_filter());
         let selected_status_for_log = selected_status.clone();
         let selected_query = normalized_search_query(&search_query());
         let selected_query_for_log = selected_query.clone();
+        let selected_sort = sort();
         let requested_page = current_page();
         let selected_language = language();
         spawn(async move {
             is_loading.set(true);
             frontend_info(format!(
-                "frontend list request: status={selected_status:?}, query={selected_query_for_log:?}, page={requested_page}"
+                "frontend list request: status={selected_status:?}, query={selected_query_for_log:?}, sort={selected_sort:?}, page={requested_page}"
             ))
             .await;
-            match list_words(selected_status, selected_query, requested_page).await {
+            match list_words(
+                selected_status,
+                selected_query,
+                selected_sort,
+                requested_page,
+            )
+            .await
+            {
                 Ok(result) => {
                     let last_page = total_pages(result.total);
                     if result.total > 0 && requested_page > last_page {
@@ -482,7 +544,7 @@ pub fn App() -> Element {
                         current_page.set(last_page);
                     } else {
                         frontend_info(format!(
-                            "frontend list completed: query={selected_query_for_log:?}, page={requested_page}, returned={}, total={}",
+                            "frontend list completed: query={selected_query_for_log:?}, sort={selected_sort:?}, page={requested_page}, returned={}, total={}",
                             result.words.len(),
                             result.total
                         ))
@@ -522,6 +584,7 @@ pub fn App() -> Element {
     let active_page = current_page();
     let active_search_query = normalized_search_query(&search_query());
     let catalog_heading = filter_label(&status_filter(), active_language);
+    let sort_menu_label = sort_menu_label(sort(), active_language);
     let pagination_summary = page_summary(active_language, word_count, active_page, page_count);
     let deletion_candidate = pending_delete();
 
@@ -557,6 +620,17 @@ pub fn App() -> Element {
                                         selected_language.value()
                                     ))
                                     .await;
+                                    if let Err(error) =
+                                        set_language_preference(selected_language.value().to_string())
+                                            .await
+                                    {
+                                        frontend_error(format!(
+                                            "frontend language preference save failed: language={}, error={error}",
+                                            selected_language.value()
+                                        ))
+                                        .await;
+                                        notice.set(localized_error(&error, selected_language));
+                                    }
                                 });
                             },
                             option { value: "zh", selected: active_language == Language::Zh, "中文" }
@@ -713,9 +787,72 @@ pub fn App() -> Element {
 
                 section { class: "library-panel",
                         div { class: "library-toolbar",
-                        div {
-                            p { class: "eyebrow", "{ui.catalog}" }
-                            h2 { "{catalog_heading}" }
+                        div { class: "library-heading",
+                            div { class: "catalog-title-line",
+                                p { class: "eyebrow", "{ui.catalog}" }
+                                h2 { "{catalog_heading}" }
+                            }
+                            div { class: "sort-menu",
+                                button {
+                                    class: "sort-trigger",
+                                    r#type: "button",
+                                    "aria-haspopup": "menu",
+                                    "aria-expanded": sort_menu_open(),
+                                    onclick: move |_| sort_menu_open.set(!sort_menu_open()),
+                                    span { class: "sort-trigger-mark", "{sort_menu_mark(sort())}" }
+                                    span { "{sort_menu_label}" }
+                                    span { class: "sort-trigger-chevron", "⌄" }
+                                }
+                                if sort_menu_open() {
+                                    div { class: "sort-options", role: "menu", "aria-label": "{ui.sort}",
+                                        button {
+                                            class: if sort() == WordSort::UpdatedAtDesc { "sort-option active" } else { "sort-option" },
+                                            r#type: "button",
+                                            role: "menuitemradio",
+                                            "aria-checked": sort() == WordSort::UpdatedAtDesc,
+                                            onclick: move |_| {
+                                                sort.set(WordSort::UpdatedAtDesc);
+                                                sort_menu_open.set(false);
+                                                current_page.set(1);
+                                                spawn(async move {
+                                                    frontend_info("frontend word sort changed: sort=UpdatedAtDesc, page=1".to_string()).await;
+                                                });
+                                            },
+                                            "{ui.sort_updated_at_desc}"
+                                        }
+                                        button {
+                                            class: if sort() == WordSort::UpdatedAtAsc { "sort-option active" } else { "sort-option" },
+                                            r#type: "button",
+                                            role: "menuitemradio",
+                                            "aria-checked": sort() == WordSort::UpdatedAtAsc,
+                                            onclick: move |_| {
+                                                sort.set(WordSort::UpdatedAtAsc);
+                                                sort_menu_open.set(false);
+                                                current_page.set(1);
+                                                spawn(async move {
+                                                    frontend_info("frontend word sort changed: sort=UpdatedAtAsc, page=1".to_string()).await;
+                                                });
+                                            },
+                                            "{ui.sort_updated_at_asc}"
+                                        }
+                                        button {
+                                            class: if sort() == WordSort::WordAsc { "sort-option active" } else { "sort-option" },
+                                            r#type: "button",
+                                            role: "menuitemradio",
+                                            "aria-checked": sort() == WordSort::WordAsc,
+                                            onclick: move |_| {
+                                                sort.set(WordSort::WordAsc);
+                                                sort_menu_open.set(false);
+                                                current_page.set(1);
+                                                spawn(async move {
+                                                    frontend_info("frontend word sort changed: sort=WordAsc, page=1".to_string()).await;
+                                                });
+                                            },
+                                            "{ui.sort_word_asc}"
+                                        }
+                                    }
+                                }
+                            }
                         }
                         div { class: "library-controls",
                             form {
@@ -924,11 +1061,44 @@ pub fn App() -> Element {
                     language: active_language,
                     on_cancel: move |_| familiarity_test_word.set(None),
                     on_passed: move |_| {
-                        draft_status.set(WordStatus::Familiar);
                         familiarity_test_word.set(None);
-                        notice.set(ui.familiarity_test_passed.to_string());
+                        let Some(id) = editing_id() else {
+                            notice.set(ui.familiarity_test_available_after_save.to_string());
+                            return;
+                        };
+                        let input = WordInput {
+                            word: draft_word(),
+                            url: draft_url(),
+                            status: WordStatus::Familiar,
+                        };
                         spawn(async move {
-                            frontend_info("frontend familiarity test passed".to_string()).await;
+                            frontend_info(format!(
+                                "frontend familiarity test passed: id={id:?}, word={:?}, url={:?}",
+                                input.word, input.url
+                            ))
+                            .await;
+                            match update_word(id, input).await {
+                                Ok(_) => {
+                                    frontend_info(
+                                        "frontend familiarity test status saved successfully"
+                                            .to_string(),
+                                    )
+                                    .await;
+                                    draft_word.set(String::new());
+                                    draft_url.set(String::new());
+                                    draft_status.set(WordStatus::Unfamiliar);
+                                    editing_id.set(None);
+                                    notice.set(ui.familiarity_test_passed.to_string());
+                                    refresh_key += 1;
+                                }
+                                Err(error) => {
+                                    frontend_error(format!(
+                                        "frontend familiarity test status save failed: error={error}"
+                                    ))
+                                    .await;
+                                    notice.set(localized_error(&error, active_language));
+                                }
+                            }
                         });
                     },
                 }
@@ -1262,6 +1432,7 @@ fn log_filter_change(
 async fn list_words(
     status: Option<WordStatus>,
     query: Option<String>,
+    sort: WordSort,
     page: u32,
 ) -> Result<WordPage, String> {
     invoke_json(
@@ -1269,6 +1440,7 @@ async fn list_words(
         &ListArgs {
             status,
             query,
+            sort,
             page,
         },
     )
@@ -1301,6 +1473,14 @@ async fn choose_data_directory(title: String) -> Result<Option<String>, String> 
 
 async fn set_data_directory(directory: String) -> Result<DataDirectory, String> {
     invoke_json("set_data_directory", &DataDirectoryArgs { directory }).await
+}
+
+async fn get_language_preference() -> Result<String, String> {
+    invoke_json("get_language_preference", &()).await
+}
+
+async fn set_language_preference(language: String) -> Result<(), String> {
+    invoke_void("set_language_preference", &LanguageArgs { language }).await
 }
 
 async fn frontend_info(message: String) {
@@ -1367,6 +1547,13 @@ fn localized_error(error: &str, language: Language) -> String {
             Language::Ja => {
                 "新しい単語を直接「身についている」にすることはできません。先に保存してからチェックを完了してください。"
             }
+        },
+        "Failed to save language preference." => match language {
+            Language::Zh => "无法保存语言偏好，下次启动将使用默认语言。",
+            Language::En => {
+                "The language preference could not be saved. The default language will be used next time."
+            }
+            Language::Ja => "言語設定を保存できませんでした。次回は既定の言語が使用されます。",
         },
         "A valid source URL is required." | "来源链接无效。" => match language {
             Language::Zh => "请输入有效的来源链接。",
@@ -1454,6 +1641,26 @@ fn filter_to_status(value: &str) -> Option<WordStatus> {
         "known" => Some(WordStatus::Known),
         "familiar" => Some(WordStatus::Familiar),
         _ => None,
+    }
+}
+
+fn sort_menu_label(sort: WordSort, language: Language) -> &'static str {
+    match (sort, language) {
+        (WordSort::UpdatedAtDesc, Language::Zh) => "最新",
+        (WordSort::UpdatedAtDesc, Language::En) => "Newest",
+        (WordSort::UpdatedAtDesc, Language::Ja) => "新しい順",
+        (WordSort::UpdatedAtAsc, Language::Zh) => "最早",
+        (WordSort::UpdatedAtAsc, Language::En) => "Oldest",
+        (WordSort::UpdatedAtAsc, Language::Ja) => "古い順",
+        (WordSort::WordAsc, _) => "A–Z",
+    }
+}
+
+fn sort_menu_mark(sort: WordSort) -> &'static str {
+    match sort {
+        WordSort::UpdatedAtDesc => "↓",
+        WordSort::UpdatedAtAsc => "↑",
+        WordSort::WordAsc => "A",
     }
 }
 

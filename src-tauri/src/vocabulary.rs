@@ -17,6 +17,25 @@ pub enum WordStatus {
     Familiar,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WordSort {
+    #[default]
+    UpdatedAtDesc,
+    UpdatedAtAsc,
+    WordAsc,
+}
+
+impl WordSort {
+    fn order_by(&self) -> &'static str {
+        match self {
+            Self::UpdatedAtDesc => "updated_at DESC, word COLLATE NOCASE ASC, id ASC",
+            Self::UpdatedAtAsc => "updated_at ASC, word COLLATE NOCASE ASC, id ASC",
+            Self::WordAsc => "word COLLATE NOCASE ASC, updated_at DESC, id ASC",
+        }
+    }
+}
+
 impl WordStatus {
     fn as_str(&self) -> &'static str {
         match self {
@@ -67,6 +86,8 @@ pub struct WordListRequest {
     pub status: Option<WordStatus>,
     #[serde(default)]
     pub query: Option<String>,
+    #[serde(default)]
+    pub sort: WordSort,
     pub page: u32,
 }
 
@@ -130,6 +151,7 @@ impl VocabularyRepository {
         let query = normalize_search_query(request.query);
         let search_pattern = query.as_deref().map(search_pattern);
         let total = self.count(request.status.as_ref(), search_pattern.as_deref())?;
+        let order_by = request.sort.order_by();
         let offset = (u64::from(request.page) - 1)
             .checked_mul(u64::from(WORDS_PER_PAGE))
             .ok_or_else(|| "Page number is out of range.".to_string())?;
@@ -138,14 +160,15 @@ impl VocabularyRepository {
         let mut words = Vec::new();
         if let Some(status) = request.status {
             if let Some(search_pattern) = search_pattern.as_deref() {
+                let statement_sql = format!(
+                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
+                     FROM words
+                     WHERE status = ?1 AND word COLLATE NOCASE LIKE ?2 ESCAPE '\\'
+                     ORDER BY {order_by} LIMIT ?3 OFFSET ?4"
+                );
                 let mut statement = self
                     .connection
-                    .prepare(
-                        "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
-                         FROM words
-                         WHERE status = ?1 AND word COLLATE NOCASE LIKE ?2 ESCAPE '\\'
-                         ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?3 OFFSET ?4",
-                    )
+                    .prepare(&statement_sql)
                     .map_err(|error| error.to_string())?;
                 let rows = statement
                     .query_map(
@@ -157,13 +180,14 @@ impl VocabularyRepository {
                     words.push(row.map_err(|error| error.to_string())?);
                 }
             } else {
+                let statement_sql = format!(
+                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
+                     FROM words WHERE status = ?1
+                     ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
+                );
                 let mut statement = self
                     .connection
-                    .prepare(
-                        "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
-                     FROM words WHERE status = ?1
-                     ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
-                    )
+                    .prepare(&statement_sql)
                     .map_err(|error| error.to_string())?;
                 let rows = statement
                     .query_map(
@@ -176,14 +200,15 @@ impl VocabularyRepository {
                 }
             }
         } else if let Some(search_pattern) = search_pattern.as_deref() {
+            let statement_sql = format!(
+                "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
+                 FROM words
+                 WHERE word COLLATE NOCASE LIKE ?1 ESCAPE '\\'
+                 ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
+            );
             let mut statement = self
                 .connection
-                .prepare(
-                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
-                     FROM words
-                     WHERE word COLLATE NOCASE LIKE ?1 ESCAPE '\\'
-                     ORDER BY updated_at DESC, word COLLATE NOCASE LIMIT ?2 OFFSET ?3",
-                )
+                .prepare(&statement_sql)
                 .map_err(|error| error.to_string())?;
             let rows = statement
                 .query_map(params![search_pattern, WORDS_PER_PAGE, offset], row_to_word)
@@ -192,13 +217,14 @@ impl VocabularyRepository {
                 words.push(row.map_err(|error| error.to_string())?);
             }
         } else {
+            let statement_sql = format!(
+                "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
+                 FROM words ORDER BY {order_by}
+                 LIMIT ?1 OFFSET ?2"
+            );
             let mut statement = self
                 .connection
-                .prepare(
-                    "SELECT id, word, url, status, phonetic, parts_of_speech, created_at, updated_at
-                     FROM words ORDER BY updated_at DESC, word COLLATE NOCASE
-                     LIMIT ?1 OFFSET ?2",
-                )
+                .prepare(&statement_sql)
                 .map_err(|error| error.to_string())?;
             let rows = statement
                 .query_map(params![WORDS_PER_PAGE, offset], row_to_word)
@@ -454,6 +480,7 @@ mod tests {
         WordListRequest {
             status,
             query: query.map(ToString::to_string),
+            sort: WordSort::default(),
             page,
         }
     }
@@ -616,6 +643,46 @@ mod tests {
 
         let blank_query = repository.list(list_request(None, Some("   "), 1)).unwrap();
         assert_eq!(blank_query.total, 15);
+    }
+
+    #[test]
+    fn sorts_words_by_update_time_or_word() {
+        let repository = VocabularyRepository::in_memory();
+        let alpha = repository
+            .create(input("alpha", WordStatus::Known))
+            .unwrap();
+        let beta = repository.create(input("beta", WordStatus::Known)).unwrap();
+        let gamma = repository
+            .create(input("gamma", WordStatus::Known))
+            .unwrap();
+
+        for (id, updated_at) in [(&alpha.id, 10_i64), (&beta.id, 30), (&gamma.id, 20)] {
+            repository
+                .connection
+                .execute(
+                    "UPDATE words SET updated_at = ?1 WHERE id = ?2",
+                    params![updated_at, id],
+                )
+                .unwrap();
+        }
+
+        let newest_first = repository.list(list_request(None, None, 1)).unwrap().words;
+        assert_eq!(newest_first[0].word, "beta");
+
+        let mut oldest_first = list_request(None, None, 1);
+        oldest_first.sort = WordSort::UpdatedAtAsc;
+        assert_eq!(
+            repository.list(oldest_first).unwrap().words[0].word,
+            "alpha"
+        );
+
+        let mut alphabetical = list_request(None, None, 1);
+        alphabetical.sort = WordSort::WordAsc;
+        let words = repository.list(alphabetical).unwrap().words;
+        assert_eq!(
+            words.into_iter().map(|word| word.word).collect::<Vec<_>>(),
+            vec!["alpha", "beta", "gamma"]
+        );
     }
 
     #[test]
